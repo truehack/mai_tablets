@@ -1,16 +1,33 @@
 import { Stack } from 'expo-router';
-import {
-    adaptNavigationTheme,
-    MD3DarkTheme,
-    MD3LightTheme,
-    PaperProvider,
-} from 'react-native-paper';
+import { useColorScheme, View } from 'react-native';
 import {
     DarkTheme as NavigationDarkTheme,
     DefaultTheme as NavigationLightTheme,
     ThemeProvider,
 } from '@react-navigation/native';
-import { useColorScheme, View } from 'react-native';
+import {
+    adaptNavigationTheme,
+    MD3DarkTheme,
+    MD3LightTheme,
+    PaperProvider
+} from 'react-native-paper';
+
+const LightTheme = {
+    ...MD3LightTheme
+}
+
+const DarkTheme = {
+    ...MD3DarkTheme,
+    colors: {
+        ...MD3DarkTheme.colors,
+        background: '#121212',
+        surface: '#121212',
+        onSurface: 'white',
+        primary: '#4A3AFF',
+        onPrimary: 'white',
+        outline: '#323232',
+    },
+};
 
 export default function RootLayout() {
     const { LightTheme: RNLightTheme, DarkTheme: RNDarkTheme } =
@@ -19,17 +36,17 @@ export default function RootLayout() {
             reactNavigationDark: NavigationDarkTheme,
         });
 
-    const LightTheme = {
-        paper: MD3LightTheme,
+    const AppLightTheme = {
+        paper: LightTheme,
         router: RNLightTheme,
     };
 
-    const DarkTheme = {
-        paper: MD3DarkTheme,
+    const AppDarkTheme = {
+        paper: DarkTheme,
         router: RNDarkTheme,
     };
 
-    const theme = useColorScheme() === 'dark' ? DarkTheme : LightTheme;
+    const theme = useColorScheme() === 'dark' ? AppDarkTheme : AppLightTheme;
 
     return (
         <ThemeProvider value={theme.router}>
