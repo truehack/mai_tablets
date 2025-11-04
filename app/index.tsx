@@ -2,18 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { LoadingScreen } from '@/components/loading-screen';
 import { Screen } from '@/components/screen';
+import { useDatabase } from '@/hooks/use-database';
 import { useLoading } from '@/hooks/use-loading';
-import { Link, Stack, useRouter } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
 import { Button, Text } from 'react-native-paper';
-import { LocalUser, useDatabase } from '@/hooks/use-database';
-import { useEffect, useState } from 'react';
 
 export default function Index() {
     const router = useRouter();
     const db = useDatabase();
-
-    // Удалить в будущем
-    const [user, setUser] = useState<LocalUser | null>()
 
     const { loading } = useLoading({
         tasks: [
@@ -26,11 +22,11 @@ export default function Index() {
                 }
             },
             async () => {
-                if (!(await db.getLocalUser())) {
+                if (
+                    !(await db.getLocalUser())
+                ) {
                     router.navigate('/login');
                     return false;
-                } else {
-                    setUser(await db.getLocalUser())
                 }
             },
         ],
@@ -55,7 +51,7 @@ export default function Index() {
             </Button>
             <Button
                 onPress={async () => {
-                    db.resetDatabase()
+                    db.resetDatabase();
                 }}
             >
                 Сбросить Базу данных
@@ -63,8 +59,6 @@ export default function Index() {
             <Link replace href="/" asChild>
                 <Button>Перейти на /</Button>
             </Link>
-
-            <Text>{JSON.stringify(user)}</Text>
         </Screen>
     );
 }

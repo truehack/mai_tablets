@@ -1,6 +1,6 @@
 import { openDatabaseSync } from 'expo-sqlite';
 
-export const db_path = 'smartdoctor.db'
+export const db_path = 'smartdoctor.db';
 
 export const db = openDatabaseSync(db_path);
 

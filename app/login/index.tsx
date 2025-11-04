@@ -31,8 +31,8 @@ export default function Login() {
             patient_uuid: `UUID-${login}`,
             patient_password_hash: `PASSWORD-HASH-${password}`,
         });
-        router.replace('/')
-    }, [db, password, login]);
+        router.navigate('/');
+    }, [db, password, login, router]);
 
     return (
         <>

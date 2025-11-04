@@ -2,6 +2,7 @@ import { Screen } from '@/components/screen';
 import { useThemedStyles } from '@/hooks/use-themed-styles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
+import { useCallback } from 'react';
 import { View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 
@@ -53,6 +54,10 @@ export default function Onboarding1() {
         },
     }));
 
+    const handleSkip = useCallback(async () => {
+        await AsyncStorage.setItem('onboarding_viewed', 'true');
+    }, []);
+
     return (
         <Screen style={styles.wrapper}>
             <View style={styles.main_container}>
@@ -60,8 +65,8 @@ export default function Onboarding1() {
                     Не забывайте принимать лекарства вовремя!
                 </Text>
                 <Text style={styles.subtitle}>
-                    Наше приложение напомнит вам о каждом приёме лекарств —
-                    даже если вы заняты, устали или в дороге.
+                    Наше приложение напомнит вам о каждом приёме лекарств — даже
+                    если вы заняты, устали или в дороге.
                 </Text>
                 <View style={styles.pagination}>
                     <View style={[styles.dot, styles.activeDot]} />
@@ -75,15 +80,7 @@ export default function Onboarding1() {
                     <Button mode="contained">Далее</Button>
                 </Link>
                 <Link href="/" asChild>
-                    <Button
-                        onPress={async () => {
-                            await AsyncStorage.setItem(
-                                'onboarding_viewed',
-                                'true',
-                            );
-                        }}
-                        mode="text"
-                    >
+                    <Button onPress={handleSkip} mode="text">
                         Пропустить
                     </Button>
                 </Link>

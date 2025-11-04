@@ -2,6 +2,7 @@ import { Screen } from '@/components/screen';
 import { useThemedStyles } from '@/hooks/use-themed-styles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
+import { useCallback } from 'react';
 import { View } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 
@@ -54,6 +55,10 @@ export default function Onboarding3() {
         },
     }));
 
+    const handlePass = useCallback(async () => {
+        await AsyncStorage.setItem('onboarding_viewed', 'true');
+    }, []);
+
     return (
         <Screen style={styles.wrapper}>
             <View style={styles.container}>
@@ -76,15 +81,7 @@ export default function Onboarding3() {
 
             <View style={styles.buttonRow}>
                 <Link href="/" asChild>
-                    <Button
-                        mode="contained"
-                        onPress={async () => {
-                            await AsyncStorage.setItem(
-                                'onboarding_viewed',
-                                'true',
-                            );
-                        }}
-                    >
+                    <Button mode="contained" onPress={handlePass}>
                         Начать использовать
                     </Button>
                 </Link>
