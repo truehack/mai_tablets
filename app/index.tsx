@@ -22,9 +22,7 @@ export default function Index() {
                 }
             },
             async () => {
-                if (
-                    !(await db.getLocalUser())
-                ) {
+                if (!(await db.getLocalUser())) {
                     router.navigate('/login');
                     return false;
                 }
