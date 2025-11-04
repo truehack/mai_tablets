@@ -1,62 +1,40 @@
+import { useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-import { LoadingScreen } from '@/components/loading-screen';
-import { Screen } from '@/components/screen';
+import { useRouter } from 'expo-router';
 import { useDatabase } from '@/hooks/use-database';
-import { useLoading } from '@/hooks/use-loading';
-import { Link, useRouter } from 'expo-router';
-import { Button, Text } from 'react-native-paper';
 
 export default function Index() {
     const router = useRouter();
     const db = useDatabase();
 
-    const { loading } = useLoading({
-        tasks: [
-            async () => {
-                if (
-                    (await AsyncStorage.getItem('onboarding_viewed')) !== 'true'
-                ) {
+    useEffect(() => {
+        let redirected = false;
+
+        (async () => {
+            try {
+                const onboardingViewed =
+                    await AsyncStorage.getItem('onboarding_viewed');
+                if (onboardingViewed !== 'true') {
+                    redirected = true;
                     router.navigate('/onboarding/screen-1');
-                    return false;
+                    return;
                 }
-            },
-            async () => {
-                if (!(await db.getLocalUser())) {
+
+                const user = await db.getLocalUser();
+                if (!user) {
+                    redirected = true;
                     router.navigate('/login');
-                    return false;
+                    return;
                 }
-            },
-        ],
-    });
 
-    if (loading || db.loading) return <LoadingScreen />;
+                if (!redirected) {
+                    router.navigate('/tabs/schedule');
+                }
+            } catch (e) {
+                console.warn('Redirect check failed', e);
+            }
+        })();
+    }, [db, router]);
 
-    return (
-        <Screen
-            style={{
-                padding: 20,
-                gap: 16,
-            }}
-        >
-            <Text>Главный экран</Text>
-            <Button
-                onPress={async () => {
-                    AsyncStorage.clear();
-                }}
-            >
-                Сбросить AsyncStorage
-            </Button>
-            <Button
-                onPress={async () => {
-                    db.resetDatabase();
-                }}
-            >
-                Сбросить Базу данных
-            </Button>
-            <Link replace href="/" asChild>
-                <Button>Перейти на /</Button>
-            </Link>
-        </Screen>
-    );
+    return null;
 }
