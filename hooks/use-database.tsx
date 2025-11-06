@@ -18,7 +18,7 @@ export interface Medication {
     start_date: string;
     end_date?: string | null;
     schedule_type: 'daily' | 'weekly_days' | 'every_x_days';
-    weekly_days?: string | null;
+    weekly_days?: string[] | null; // ✅ теперь массив строк
     interval_days?: number | null;
     times_list: string | string[];
     synced?: boolean;
@@ -49,7 +49,7 @@ export function useDatabase() {
         })();
     }, []);
 
-    // ---------- LOCAL USER (Singleton) ----------
+    // ---------- LOCAL USER ----------
     const getLocalUser = useCallback(async (): Promise<LocalUser | null> => {
         const rows = await db.getAllAsync<LocalUser>(
             `SELECT * FROM local_user LIMIT 1`,
@@ -59,15 +59,13 @@ export function useDatabase() {
 
     const setLocalUser = useCallback(
         async (user: LocalUser) => {
-            // Проверяем, есть ли уже пользователь
             const existing = await getLocalUser();
 
             if (existing) {
-                // Обновляем запись
                 await db.runAsync(
                     `UPDATE local_user
-       SET patient_uuid = ?, patient_password_hash = ?, relation_uuid = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+                     SET patient_uuid = ?, patient_password_hash = ?, relation_uuid = ?, updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?`,
                     [
                         user.patient_uuid ?? null,
                         user.patient_password_hash ?? null,
@@ -76,10 +74,9 @@ export function useDatabase() {
                     ],
                 );
             } else {
-                // Создаём нового
                 await db.runAsync(
                     `INSERT INTO local_user (patient_uuid, patient_password_hash, relation_uuid)
-       VALUES (?, ?, ?)`,
+                     VALUES (?, ?, ?)`,
                     [
                         user.patient_uuid,
                         user.patient_password_hash,
@@ -99,9 +96,9 @@ export function useDatabase() {
     const addMedication = useCallback(async (med: Medication) => {
         await db.runAsync(
             `INSERT INTO medications (
-        name, form, instructions, start_date, end_date,
-        schedule_type, weekly_days, interval_days, times_list
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                name, form, instructions, start_date, end_date,
+                schedule_type, weekly_days, interval_days, times_list
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 med.name,
                 med.form,
@@ -109,19 +106,44 @@ export function useDatabase() {
                 med.start_date,
                 med.end_date ?? null,
                 med.schedule_type,
-                med.weekly_days ?? null,
+                med.weekly_days ? JSON.stringify(med.weekly_days) : null, // ✅ сохраняем как JSON
                 med.interval_days ?? null,
                 typeof med.times_list === 'string'
                     ? med.times_list
-                    : JSON.stringify(med.times_list),
+                    : JSON.stringify(med.times_list), // ✅ JSON для списка времён
             ],
         );
     }, []);
 
     const getMedications = useCallback(async (): Promise<Medication[]> => {
-        return await db.getAllAsync<Medication>(
+        const rows = await db.getAllAsync<Medication>(
             `SELECT * FROM medications ORDER BY id DESC`,
         );
+
+        // ✅ Парсим weekly_days и times_list обратно
+        return rows.map((m) => ({
+            ...m,
+            weekly_days: (() => {
+                try {
+                    if (typeof m.weekly_days === 'string') {
+                        return JSON.parse(m.weekly_days);
+                    }
+                    return m.weekly_days;
+                } catch {
+                    return null;
+                }
+            })(),
+            times_list: (() => {
+                try {
+                    if (typeof m.times_list === 'string' && m.times_list.startsWith('[')) {
+                        return JSON.parse(m.times_list);
+                    }
+                    return m.times_list;
+                } catch {
+                    return m.times_list;
+                }
+            })(),
+        }));
     }, []);
 
     const deleteMedication = useCallback(async (id: number) => {
@@ -132,8 +154,8 @@ export function useDatabase() {
     const addIntake = useCallback(async (intake: IntakeHistory) => {
         await db.runAsync(
             `INSERT INTO intake_history (
-        medication_id, planned_time, datetime, taken, skipped, dose_taken, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                medication_id, planned_time, datetime, taken, skipped, dose_taken, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
                 intake.medication_id,
                 intake.planned_time,
@@ -161,13 +183,11 @@ export function useDatabase() {
         try {
             if (full) {
                 const dbPath = `${FileSystem.documentDirectory}SQLite/${db_path}`;
-
                 const fileInfo = await FileSystem.getInfoAsync(dbPath);
                 if (fileInfo.exists) {
                     await FileSystem.deleteAsync(dbPath);
                     console.log('🗑️ Файл базы данных удалён');
                 }
-
                 await initDatabase();
             } else {
                 await db.execAsync(`
