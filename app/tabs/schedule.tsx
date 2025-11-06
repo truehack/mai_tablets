@@ -107,18 +107,15 @@ export default function Schedule() {
     };
 
     const filteredMeds = useMemo(() => {
-        const dayIndex = days.indexOf(selectedDay); // 0–6
         return medications.filter((m) => {
-            // Преобразуем дату начала в день недели
+            if (!m.start_date) return false;
             const start = new Date(m.start_date);
             if (isNaN(start.getTime())) return false;
 
-            const medDay = (start.getDay() + 6) % 7; // чтобы ПН был первым
-            const isSameDay = medDay === dayIndex;
-
+            // Ежедневные лекарства: показываем каждый день, но только после даты начала
             if (m.schedule_type === 'daily') {
-                // daily → показываем только если совпадает день старта
-                return isSameDay;
+                const today = new Date();
+                return start <= today; // ← показываем, если сегодня >= дата начала
             }
 
             if (m.schedule_type === 'weekly_days' && m.weekly_days) {
@@ -127,21 +124,31 @@ export default function Schedule() {
                         typeof m.weekly_days === 'string'
                             ? JSON.parse(m.weekly_days)
                             : m.weekly_days;
-                    return daysList.includes(selectedDay);
+                    return Array.isArray(daysList) && daysList.includes(selectedDay);
                 } catch {
                     return false;
                 }
             }
 
-            if (m.schedule_type === 'every_x_days' && m.start_date) {
-                const diff =
-                    (new Date().getTime() - start.getTime()) / (1000 * 3600 * 24);
-                return diff % (m.interval_days ?? 1) === 0;
+            if (m.schedule_type === 'every_x_days' && m.start_date && m.interval_days) {
+                const today = new Date();
+                const todayIdx = (today.getDay() + 6) % 7; // ПН = 0
+                const monday = new Date(today);
+                monday.setDate(today.getDate() - todayIdx);
+                const targetDate = new Date(monday);
+                const dayIndex = days.indexOf(selectedDay);
+                if (dayIndex === -1) return false;
+                targetDate.setDate(monday.getDate() + dayIndex);
+
+                const diffMs = targetDate.getTime() - start.getTime();
+                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                if (diffDays < 0) return false;
+                return diffDays % m.interval_days === 0;
             }
 
             return false;
         });
-    }, [medications, selectedDay]);
+    }, [medications, selectedDay, days]);
 
 
     if (loading) {
