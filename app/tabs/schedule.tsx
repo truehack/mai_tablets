@@ -43,68 +43,13 @@ export default function Schedule() {
         } finally {
             setLoading(false);
         }
-    }, [getMedications, selectedDay]);
-
+    }, [getMedications]);
 
     useFocusEffect(
         useCallback(() => {
             loadMeds();
         }, [loadMeds])
     );
-
-    // helper: weekday string from date (ПН..ВС)
-    const weekdayFromDate = (dateStr?: string): string | null => {
-        if (!dateStr) return null;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return null;
-        const idx = (d.getDay() + 6) % 7; // shift so Monday=0
-        return days[idx];
-    };
-
-    // main predicate: попадет ли med на selectedDay
-    const isMedForDay = (m: Medication, day: string) => {
-        if (!day) return true;
-        if (m.schedule_type === 'daily') return true;
-
-        if (m.schedule_type === 'weekly_days') {
-            // если есть weekly_days как массив — используем его
-            if (Array.isArray(m.weekly_days) && m.weekly_days.length) {
-                return m.weekly_days.includes(day);
-            }
-            // если weekly_days отсутствует или пустой — fallback на start_date weekday
-            const w = weekdayFromDate(m.start_date);
-            return w === day;
-        }
-
-        if (m.schedule_type === 'every_x_days') {
-            // если есть interval_days и start_date — вычисляем по разнице дней
-            if (!m.start_date || !m.interval_days) return false;
-            const start = new Date(m.start_date);
-            if (isNaN(start.getTime())) return false;
-            // считаем, попадает ли выбранный день в последовательность
-            // Найдём ближайшую дату для выбранного weekday на текущей неделе,
-            // затем считаем diff в днях от start до этой даты и проверяем делимость.
-            // Для простоты возьмём текущую дату, найдем её индекс недели и сравним.
-            const today = new Date();
-            // Найдём любую дату, соответствующую selectedDay — возьмём ближайшую в пределах +/-7 дней от today
-            let target: Date | null = null;
-            for (let delta = -7; delta <= 7; delta++) {
-                const cand = new Date();
-                cand.setDate(today.getDate() + delta);
-                const candWeekday = days[(cand.getDay() + 6) % 7];
-                if (candWeekday === day) {
-                    target = cand;
-                    break;
-                }
-            }
-            if (!target) return false;
-            const diffDays = Math.floor((target.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-            if (diffDays < 0) return false;
-            return diffDays % Number(m.interval_days) === 0;
-        }
-
-        return false;
-    };
 
     const filteredMeds = useMemo(() => {
         return medications.filter((m) => {
@@ -115,7 +60,9 @@ export default function Schedule() {
             // Ежедневные лекарства: показываем каждый день, но только после даты начала
             if (m.schedule_type === 'daily') {
                 const today = new Date();
-                return start <= today; // ← показываем, если сегодня >= дата начала
+                const todayStr = today.toISOString().split('T')[0];
+                const startStr = start.toISOString().split('T')[0];
+                return startStr <= todayStr;
             }
 
             if (m.schedule_type === 'weekly_days' && m.weekly_days) {
@@ -150,7 +97,6 @@ export default function Schedule() {
         });
     }, [medications, selectedDay, days]);
 
-
     if (loading) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -165,7 +111,6 @@ export default function Schedule() {
                 {days.map((day, idx) => {
                     const isSelected = selectedDay === day;
 
-                    // вычисляем дату для этого дня относительно текущей недели
                     const today = new Date();
                     const todayIdx = (today.getDay() + 6) % 7; // ПН = 0
                     const monday = new Date(today);
@@ -195,7 +140,6 @@ export default function Schedule() {
                     );
                 })}
             </View>
-
 
             <FlatList
                 data={filteredMeds}
@@ -240,6 +184,3 @@ export default function Schedule() {
         </Screen>
     );
 }
-
-
-
