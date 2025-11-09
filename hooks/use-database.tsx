@@ -178,6 +178,18 @@ export function useDatabase() {
         await db.runAsync(`DELETE FROM intake_history WHERE id = ?`, [id]);
     }, []);
 
+    // ✅ НОВАЯ ФУНКЦИЯ: отметить как принятое
+    const markAsTaken = useCallback(async (medicationId: number, plannedTime: string) => {
+        const now = new Date().toISOString();
+        await addIntake({
+            medication_id: medicationId,
+            planned_time: plannedTime, // время, на которое был запланирован приём
+            datetime: now,
+            taken: true,
+            skipped: false,
+        });
+    }, [addIntake]);
+
     // ---------- RESET DATABASE ----------
     const resetDatabase = useCallback(async (full: boolean = false) => {
         try {
@@ -214,5 +226,6 @@ export function useDatabase() {
         addIntake,
         getIntakeHistory,
         deleteIntake,
+        markAsTaken,      // ✅ Теперь функция объявлена и возвращается
     };
 }

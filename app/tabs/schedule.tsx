@@ -4,12 +4,13 @@ import { Text, Card, FAB } from 'react-native-paper';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/screen';
-import { useDatabase, Medication } from '@/hooks/use-database';
+import { useDatabase, Medication, IntakeHistory } from '@/hooks/use-database';
 
 export default function Schedule() {
     const router = useRouter();
-    const { getMedications } = useDatabase();
+    const { getMedications, getIntakeHistory } = useDatabase();
     const [medications, setMedications] = useState<Medication[]>([]);
+    const [intakeHistory, setIntakeHistory] = useState<IntakeHistory[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedDay, setSelectedDay] = useState<string>('');
 
@@ -45,11 +46,32 @@ export default function Schedule() {
         }
     }, [getMedications]);
 
+    const loadHistory = useCallback(async () => {
+        try {
+            const history = await getIntakeHistory();
+            setIntakeHistory(history);
+        } catch (e) {
+            console.error('Ошибка загрузки истории приёма:', e);
+        }
+    }, [getIntakeHistory]);
+
     useFocusEffect(
         useCallback(() => {
             loadMeds();
-        }, [loadMeds])
+            loadHistory();
+        }, [loadMeds, loadHistory])
     );
+
+    const getTodayIntakeStatus = (medicationId: number) => {
+        const today = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
+        const todayIntakes = intakeHistory.filter(
+            intake =>
+                intake.medication_id === medicationId &&
+                intake.datetime.startsWith(today)
+        );
+        const lastIntake = todayIntakes[0]; // последняя запись за сегодня
+        return lastIntake ? (lastIntake.taken ? 'Принято' : 'Пропущено') : 'Не принято';
+    };
 
     const filteredMeds = useMemo(() => {
         return medications.filter((m) => {
@@ -146,8 +168,8 @@ export default function Schedule() {
                 extraData={selectedDay}
                 keyExtractor={(item) => String(item.id)}
                 renderItem={({ item }) => {
-                    const status = 'Не принято';
-                    const statusColor = '#FF3B30';
+                    const status = getTodayIntakeStatus(item.id);
+                    const statusColor = status === 'Принято' ? '#34C759' : status === 'Пропущено' ? '#FF9500' : '#FF3B30';
                     const times =
                         typeof item.times_list === 'string'
                             ? item.times_list
@@ -158,23 +180,27 @@ export default function Schedule() {
                         item.form === 'tablet' ? '💊' : item.form === 'drop' ? '💧' : item.form === 'spray' ? '🧴' : '❓';
 
                     return (
-                        <View style={{ marginBottom: 16 }}>
-                            <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
-                                {times} <Text style={{ color: statusColor, fontWeight: '500' }}>{status}</Text>
-                            </Text>
+                        <TouchableOpacity
+                            onPress={() => router.push(`/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(times)}`)}
+                        >
+                            <View style={{ marginBottom: 16 }}>
+                                <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
+                                    {times} <Text style={{ color: statusColor, fontWeight: '500' }}>{status}</Text>
+                                </Text>
 
-                            <Card mode="contained" style={{ backgroundColor: '#1E1E1E', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16 }}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#2C2C2C', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                                        <Text style={{ fontSize: 20 }}>{icon}</Text>
+                                <Card mode="contained" style={{ backgroundColor: '#1E1E1E', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#2C2C2C', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                                            <Text style={{ fontSize: 20 }}>{icon}</Text>
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', marginBottom: 2 }}>{item.name}</Text>
+                                            <Text style={{ color: '#ccc', fontSize: 13 }}>{item.form || '—'}</Text>
+                                        </View>
                                     </View>
-                                    <View style={{ flex: 1 }}>
-                                        <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', marginBottom: 2 }}>{item.name}</Text>
-                                        <Text style={{ color: '#ccc', fontSize: 13 }}>{item.form || '—'}</Text>
-                                    </View>
-                                </View>
-                            </Card>
-                        </View>
+                                </Card>
+                            </View>
+                        </TouchableOpacity>
                     );
                 }}
                 ListEmptyComponent={<Text style={{ color: '#999', textAlign: 'center', marginTop: 40 }}>Нет медикаментов на {selectedDay}.</Text>}
