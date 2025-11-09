@@ -7,206 +7,299 @@ import { Screen } from '@/components/screen';
 import { useDatabase, Medication, IntakeHistory } from '@/hooks/use-database';
 
 export default function Schedule() {
-    const router = useRouter();
-    const { getMedications, getIntakeHistory } = useDatabase();
-    const [medications, setMedications] = useState<Medication[]>([]);
-    const [intakeHistory, setIntakeHistory] = useState<IntakeHistory[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [selectedDay, setSelectedDay] = useState<string>('');
+  const router = useRouter();
+  const { getMedications, getIntakeHistory } = useDatabase();
+  const [medications, setMedications] = useState<Medication[]>([]);
+  const [intakeHistory, setIntakeHistory] = useState<IntakeHistory[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
+    const today = new Date();
+    const day = today.getDay(); // 0 = воскресенье
+    const diff = today.getDate() - (day === 0 ? 6 : day - 1); // Понедельник
+    return new Date(today.setDate(diff));
+  });
+  const [selectedDay, setSelectedDay] = useState<string>('');
 
-    const days = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
+  const days = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
 
-    useEffect(() => {
-        const todayIndex = new Date().getDay(); // 0 = Sunday
-        const today = days[(todayIndex + 6) % 7]; // ПН первый
-        setSelectedDay(today);
-    }, []);
+  useEffect(() => {
+    const todayIndex = new Date().getDay(); // 0 = Sunday
+    const today = days[(todayIndex + 6) % 7]; // ПН первый
+    setSelectedDay(today);
+  }, []);
 
-    const loadMeds = useCallback(async () => {
-        setLoading(true);
-        try {
-            const meds = await getMedications();
-            setMedications(meds);
-            console.log('--- LOADED MEDS ---');
-            meds.forEach(m => {
-                console.log({
-                    id: m.id,
-                    name: m.name,
-                    schedule_type: m.schedule_type,
-                    weekly_days: m.weekly_days,
-                    start_date: m.start_date,
-                    times_list: m.times_list,
-                });
-            });
-            console.log('--- SELECTED DAY ---', selectedDay);
-        } catch (e) {
-            console.error('Ошибка загрузки медикаментов:', e);
-        } finally {
-            setLoading(false);
-        }
-    }, [getMedications]);
+  const loadMeds = useCallback(async () => {
+    setLoading(true);
+    try {
+      const meds = await getMedications();
+      setMedications(meds);
+    } catch (e) {
+      console.error('Ошибка загрузки медикаментов:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [getMedications]);
 
-    const loadHistory = useCallback(async () => {
-        try {
-            const history = await getIntakeHistory();
-            setIntakeHistory(history);
-        } catch (e) {
-            console.error('Ошибка загрузки истории приёма:', e);
-        }
-    }, [getIntakeHistory]);
+  const loadHistory = useCallback(async () => {
+    try {
+      const history = await getIntakeHistory();
+      setIntakeHistory(history);
+    } catch (e) {
+      console.error('Ошибка загрузки истории приёма:', e);
+    }
+  }, [getIntakeHistory]);
 
-    useFocusEffect(
-        useCallback(() => {
-            loadMeds();
-            loadHistory();
-        }, [loadMeds, loadHistory])
+  useFocusEffect(
+    useCallback(() => {
+      loadMeds();
+      loadHistory();
+    }, [loadMeds, loadHistory])
+  );
+
+  const getIntakeStatusForDate = (medicationId: number, date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const dayIntakes = intakeHistory.filter(
+      intake =>
+        intake.medication_id === medicationId &&
+        intake.datetime.startsWith(dateStr)
     );
+    const lastIntake = dayIntakes[0];
+    return lastIntake ? (lastIntake.taken ? 'Принято' : 'Пропущено') : 'Не принято';
+  };
 
-    const getTodayIntakeStatus = (medicationId: number) => {
-        const today = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
-        const todayIntakes = intakeHistory.filter(
-            intake =>
-                intake.medication_id === medicationId &&
-                intake.datetime.startsWith(today)
-        );
-        const lastIntake = todayIntakes[0]; // последняя запись за сегодня
-        return lastIntake ? (lastIntake.taken ? 'Принято' : 'Пропущено') : 'Не принято';
-    };
+  const getDateForDay = (dayIndex: number) => {
+    const date = new Date(currentWeekStart);
+    date.setDate(currentWeekStart.getDate() + dayIndex);
+    return date;
+  };
 
-    const filteredMeds = useMemo(() => {
-        return medications.filter((m) => {
-            if (!m.start_date) return false;
-            const start = new Date(m.start_date);
-            if (isNaN(start.getTime())) return false;
+  const isMedForSelectedDay = (med: Medication, day: string) => {
+    if (!med.start_date) return false;
+    const start = new Date(med.start_date);
+    if (isNaN(start.getTime())) return false;
 
-            // Ежедневные лекарства: показываем каждый день, но только после даты начала
-            if (m.schedule_type === 'daily') {
-                const today = new Date();
-                const todayStr = today.toISOString().split('T')[0];
-                const startStr = start.toISOString().split('T')[0];
-                return startStr <= todayStr;
-            }
-
-            if (m.schedule_type === 'weekly_days' && m.weekly_days) {
-                try {
-                    const daysList =
-                        typeof m.weekly_days === 'string'
-                            ? JSON.parse(m.weekly_days)
-                            : m.weekly_days;
-                    return Array.isArray(daysList) && daysList.includes(selectedDay);
-                } catch {
-                    return false;
-                }
-            }
-
-            if (m.schedule_type === 'every_x_days' && m.start_date && m.interval_days) {
-                const today = new Date();
-                const todayIdx = (today.getDay() + 6) % 7; // ПН = 0
-                const monday = new Date(today);
-                monday.setDate(today.getDate() - todayIdx);
-                const targetDate = new Date(monday);
-                const dayIndex = days.indexOf(selectedDay);
-                if (dayIndex === -1) return false;
-                targetDate.setDate(monday.getDate() + dayIndex);
-
-                const diffMs = targetDate.getTime() - start.getTime();
-                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-                if (diffDays < 0) return false;
-                return diffDays % m.interval_days === 0;
-            }
-
-            return false;
-        });
-    }, [medications, selectedDay, days]);
-
-    if (loading) {
-        return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                <Text style={{ color: '#ccc' }}>Загрузка...</Text>
-            </View>
-        );
+    if (med.schedule_type === 'daily') {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      const startStr = start.toISOString().split('T')[0];
+      return startStr <= todayStr;
     }
 
-    return (
-        <Screen style={{ flex: 1, backgroundColor: '#121212', paddingHorizontal: 16, paddingTop: 20 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
-                {days.map((day, idx) => {
-                    const isSelected = selectedDay === day;
+    if (med.schedule_type === 'weekly_days' && med.weekly_days) {
+      try {
+        const daysList = typeof med.weekly_days === 'string' ? JSON.parse(med.weekly_days) : med.weekly_days;
+        if (Array.isArray(daysList)) {
+          return daysList.includes(day);
+        }
+      } catch {
+        return false;
+      }
+    }
 
-                    const today = new Date();
-                    const todayIdx = (today.getDay() + 6) % 7; // ПН = 0
-                    const monday = new Date(today);
-                    monday.setDate(today.getDate() - todayIdx); // получаем понедельник текущей недели
-                    const dateForDay = new Date(monday);
-                    dateForDay.setDate(monday.getDate() + idx);
-                    const dateNum = dateForDay.getDate();
+    if (med.schedule_type === 'every_x_days' && med.start_date && med.interval_days) {
+      const targetDate = getDateForDay(days.indexOf(day));
+      const diffMs = targetDate.getTime() - start.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) return false;
+      return diffDays % med.interval_days === 0;
+    }
 
-                    return (
-                        <TouchableOpacity key={day} onPress={() => setSelectedDay(day)}>
-                            <View style={{ alignItems: 'center' }}>
-                                <View
-                                    style={{
-                                        backgroundColor: isSelected ? '#4A3AFF' : '#1E1E1E',
-                                        borderRadius: 25,
-                                        width: 36,
-                                        height: 36,
-                                        justifyContent: 'center',
-                                        alignItems: 'center',
-                                    }}
-                                >
-                                    <Text style={{ color: isSelected ? 'white' : '#aaa', fontWeight: '600' }}>{day}</Text>
-                                </View>
-                                <Text style={{ color: '#aaa', fontSize: 12, marginTop: 4 }}>{dateNum}</Text>
-                            </View>
-                        </TouchableOpacity>
-                    );
-                })}
-            </View>
+    return false;
+  };
 
-            <FlatList
-                data={filteredMeds}
-                extraData={selectedDay}
-                keyExtractor={(item) => String(item.id)}
-                renderItem={({ item }) => {
-                    const status = getTodayIntakeStatus(item.id);
-                    const statusColor = status === 'Принято' ? '#34C759' : status === 'Пропущено' ? '#FF9500' : '#FF3B30';
-                    const times =
-                        typeof item.times_list === 'string'
-                            ? item.times_list
-                            : Array.isArray(item.times_list)
-                                ? item.times_list.join(', ')
-                                : '—';
-                    const icon =
-                        item.form === 'tablet' ? '💊' : item.form === 'drop' ? '💧' : item.form === 'spray' ? '🧴' : '❓';
+  const filteredMeds = useMemo(() => {
+    return medications.filter(m => isMedForSelectedDay(m, selectedDay));
+  }, [medications, selectedDay]);
 
-                    return (
-                        <TouchableOpacity
-                            onPress={() => router.push(`/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(times)}`)}
-                        >
-                            <View style={{ marginBottom: 16 }}>
-                                <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
-                                    {times} <Text style={{ color: statusColor, fontWeight: '500' }}>{status}</Text>
-                                </Text>
+  const minDate = new Date();
+  minDate.setMonth(minDate.getMonth() - 1);
+  const maxDate = new Date();
+  maxDate.setMonth(maxDate.getMonth() + 1);
 
-                                <Card mode="contained" style={{ backgroundColor: '#1E1E1E', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16 }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#2C2C2C', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
-                                            <Text style={{ fontSize: 20 }}>{icon}</Text>
-                                        </View>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', marginBottom: 2 }}>{item.name}</Text>
-                                            <Text style={{ color: '#ccc', fontSize: 13 }}>{item.form || '—'}</Text>
-                                        </View>
-                                    </View>
-                                </Card>
-                            </View>
-                        </TouchableOpacity>
-                    );
-                }}
-                ListEmptyComponent={<Text style={{ color: '#999', textAlign: 'center', marginTop: 40 }}>Нет медикаментов на {selectedDay}.</Text>}
-            />
+  const canGoBack = currentWeekStart > minDate;
+  const canGoForward = currentWeekStart < maxDate;
 
-            <FAB icon="plus" onPress={() => router.push('/modals/add')} style={{ position: 'absolute', right: 16, bottom: 16, backgroundColor: '#4A3AFF' }} />
-        </Screen>
-    );
+  const goToPreviousWeek = () => {
+    if (canGoBack) {
+      const newDate = new Date(currentWeekStart);
+      newDate.setDate(currentWeekStart.getDate() - 7);
+      setCurrentWeekStart(newDate);
+      const todayIndex = new Date().getDay();
+      const today = days[(todayIndex + 6) % 7];
+      setSelectedDay(today);
+    }
+  };
+
+  const goToNextWeek = () => {
+    if (canGoForward) {
+      const newDate = new Date(currentWeekStart);
+      newDate.setDate(currentWeekStart.getDate() + 7);
+      setCurrentWeekStart(newDate);
+      const todayIndex = new Date().getDay();
+      const today = days[(todayIndex + 6) % 7];
+      setSelectedDay(today);
+    }
+  };
+
+  return (
+    <Screen style={{ flex: 1, backgroundColor: '#121212', paddingHorizontal: 16, paddingTop: 20 }}>
+      {/* Панель с днями недели и кнопкой "Сегодня" */}
+      <View style={{ marginBottom: 20 }}>
+        {/* Строка с днями недели */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+          <TouchableOpacity onPress={goToPreviousWeek} disabled={!canGoBack}>
+            <Text style={{ color: canGoBack ? '#4A3AFF' : '#444', fontSize: 24, alignSelf: 'center' }}>
+              {'\u25C0'}
+            </Text>
+          </TouchableOpacity>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-around', flex: 1 }}>
+            {days.map((day, idx) => {
+              const date = getDateForDay(idx);
+              const dayNum = date.getDate();
+              const isSelected = selectedDay === day;
+
+              return (
+                <TouchableOpacity key={day} onPress={() => setSelectedDay(day)}>
+                  <View style={{ alignItems: 'center' }}>
+                    <View
+                      style={{
+                        backgroundColor: isSelected ? '#4A3AFF' : '#1E1E1E',
+                        borderRadius: 25,
+                        width: 36,
+                        height: 36,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ color: isSelected ? 'white' : '#aaa', fontWeight: '600' }}>{day}</Text>
+                    </View>
+                    <Text style={{ color: '#aaa', fontSize: 12, marginTop: 4 }}>{dayNum}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TouchableOpacity onPress={goToNextWeek} disabled={!canGoForward}>
+            <Text style={{ color: canGoForward ? '#4A3AFF' : '#444', fontSize: 24, alignSelf: 'center' }}>
+              {'\u25B6'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Кнопка "Сегодня" — ИСПРАВЛЕНА: теперь выделяет настоящий сегодняшний день */}
+        <TouchableOpacity
+          onPress={() => {
+            // Сохраняем настоящую "сегодняшнюю" дату
+            const realToday = new Date();
+
+            // Вычисляем понедельник текущей недели БЕЗ изменения realToday
+            const day = realToday.getDay(); // 0 = воскресенье
+            const diff = realToday.getDate() - (day === 0 ? 6 : day - 1);
+            const currentMonday = new Date(realToday);
+            currentMonday.setDate(diff);
+            setCurrentWeekStart(currentMonday);
+
+            // Используем realToday для определения сегодняшнего дня недели
+            const todayIndex = realToday.getDay(); // ← теперь это действительно сегодня!
+            const todayDay = days[(todayIndex + 6) % 7]; // ПН первый
+            setSelectedDay(todayDay);
+          }}
+          style={{
+            backgroundColor: '#4A3AFF',
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 12,
+            justifyContent: 'center',
+            alignItems: 'center',
+            alignSelf: 'center',
+          }}
+        >
+          <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Сегодня</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Список лекарств */}
+      <FlatList<Medication>
+        data={filteredMeds}
+        extraData={selectedDay}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={({ item }) => {
+          const selectedDate = getDateForDay(days.indexOf(selectedDay));
+          const status = getIntakeStatusForDate(item.id, selectedDate);
+          const statusColor = status === 'Принято' ? '#34C759' : status === 'Пропущено' ? '#FF9500' : '#FF3B30';
+          const times =
+            typeof item.times_list === 'string'
+              ? item.times_list
+              : Array.isArray(item.times_list)
+              ? item.times_list.join(', ')
+              : '—';
+          const icon =
+            item.form === 'tablet'
+              ? '💊'
+              : item.form === 'drop'
+              ? '💧'
+              : item.form === 'spray'
+              ? '🧴'
+              : '❓';
+
+          return (
+            <TouchableOpacity
+              onPress={() =>
+                router.push(
+                  `/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(times)}`
+                )
+              }
+            >
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
+                  {times}{' '}
+                  <Text style={{ color: statusColor, fontWeight: '500' }}>{status}</Text>
+                </Text>
+
+                <Card
+                  mode="contained"
+                  style={{ backgroundColor: '#1E1E1E', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16 }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: '#2C2C2C',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        marginRight: 12,
+                      }}
+                    >
+                      <Text style={{ fontSize: 20 }}>{icon}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', marginBottom: 2 }}>
+                        {item.name}
+                      </Text>
+                      <Text style={{ color: '#ccc', fontSize: 13 }}>{item.form || '—'}</Text>
+                    </View>
+                  </View>
+                </Card>
+              </View>
+            </TouchableOpacity>
+          );
+        }}
+        ListEmptyComponent={
+          <Text style={{ color: '#999', textAlign: 'center', marginTop: 40 }}>
+            Нет медикаментов на {selectedDay}.
+          </Text>
+        }
+      />
+
+      <FAB
+        icon="plus"
+        onPress={() => router.push('/modals/add')}
+        style={{ position: 'absolute', right: 16, bottom: 16, backgroundColor: '#4A3AFF' }}
+      />
+    </Screen>
+  );
 }
