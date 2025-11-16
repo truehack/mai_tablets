@@ -36,17 +36,23 @@ export default function RootLayout() {
             reactNavigationDark: NavigationDarkTheme,
         });
 
-    const AppLightTheme = {
-        paper: LightTheme,
-        router: RNLightTheme,
-    };
-
     const AppDarkTheme = {
-        paper: DarkTheme,
+        paper: {
+            ...MD3DarkTheme,
+            colors: {
+                ...MD3DarkTheme.colors,
+                background: '#121212',
+                surface: '#121212',
+                onSurface: 'white',
+                primary: '#4A3AFF',
+                onPrimary: 'white',
+                outline: '#323232',
+            },
+        },
         router: RNDarkTheme,
     };
 
-    const theme = useColorScheme() === 'dark' ? AppDarkTheme : AppLightTheme;
+    const theme = AppDarkTheme; // 👈 теперь всегда тёмная тема
 
     return (
         <ThemeProvider value={theme.router}>
