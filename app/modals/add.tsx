@@ -22,38 +22,135 @@ async function scheduleMedicationNotification(
   name: string,
   form: string,
   time: string,
-  repeats: boolean
+  scheduleType: Medication['schedule_type'],
+  weeklyDays?: string[],
+  intervalDays?: number,
+  startDate?: string
 ) {
   const [hour, minute] = time.split(":").map(Number);
-  if (isNaN(hour) || isNaN(minute)) return;
-
-  const now = new Date();
-  const triggerTime = new Date();
-  triggerTime.setHours(hour);
-  triggerTime.setMinutes(minute - 10); // минус 10 минут
-  triggerTime.setSeconds(0);
-
-  // если уже прошло — переносим на завтра
-  if (triggerTime <= now) {
-    triggerTime.setDate(triggerTime.getDate() + 1);
+  if (isNaN(hour) || isNaN(minute)) {
+    console.log(`⏰ Ошибка: время ${time} некорректно`);
+    return;
   }
 
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: `💊 Скоро приём: ${name}`,
-      body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
-      sound: true,
-    },
-    trigger: repeats
-      ? {
-          hour: triggerTime.getHours(),
-          minute: triggerTime.getMinutes(),
-          repeats: true,
-        }
-      : { date: triggerTime },
-  });
+  // Вычисляем время уведомления: за 10 минут до приёма
+  let notificationHour = hour;
+  let notificationMinute = minute - 10;
 
-  console.log(`⏰ Уведомление создано для ${name} на ${triggerTime}`);
+  // Если минуты < 0 — переносим на предыдущий час
+  if (notificationMinute < 0) {
+    notificationMinute += 60;
+    notificationHour -= 1;
+    // Если час < 0 — переносим на предыдущий день
+    if (notificationHour < 0) {
+      notificationHour = 23;
+    }
+  }
+
+  // Если тип — daily
+  if (scheduleType === 'daily') {
+    const now = new Date();
+    const triggerTime = new Date();
+    triggerTime.setHours(notificationHour);
+    triggerTime.setMinutes(notificationMinute);
+    triggerTime.setSeconds(0);
+
+    // Если время уже прошло — переносим на завтра
+    if (triggerTime <= now) {
+      triggerTime.setDate(triggerTime.getDate() + 1);
+    }
+
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: `💊 Скоро приём: ${name}`,
+          body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+          sound: true,
+        },
+        trigger: {
+          date: triggerTime,
+        },
+      });
+      console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
+    } catch (e) {
+      console.error(`❌ Ошибка при планировании уведомления для ${name}:`, e);
+    }
+  } else if (scheduleType === 'weekly_days' && weeklyDays) {
+    // Планируем уведомления на конкретные дни недели
+    for (const day of weeklyDays) {
+      const now = new Date();
+      const triggerTime = new Date();
+      triggerTime.setHours(notificationHour);
+      triggerTime.setMinutes(notificationMinute);
+      triggerTime.setSeconds(0);
+
+      // Если время уже прошло — переносим на завтра
+      if (triggerTime <= now) {
+        triggerTime.setDate(triggerTime.getDate() + 1);
+      }
+
+      try {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `💊 Скоро приём: ${name}`,
+            body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+            sound: true,
+          },
+          trigger: {
+            date: triggerTime,
+          },
+        });
+        console.log(`⏰ Уведомление запланировано для ${name} на ${day} в ${triggerTime}`);
+      } catch (e) {
+        console.error(`❌ Ошибка при планировании уведомления для ${name} на ${day}:`, e);
+      }
+    }
+  } else if (scheduleType === 'every_x_days' && intervalDays && startDate) {
+    // Планируем уведомления на дни, кратные intervalDays, начиная с startDate
+    const start = new Date(startDate);
+    const today = new Date();
+    const diffMs = today.getTime() - start.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    let nextDayOffset = intervalDays - (diffDays % intervalDays);
+    if (nextDayOffset === intervalDays) nextDayOffset = 0; // если сегодня совпадает
+
+    const nextDate = new Date(today);
+    nextDate.setDate(today.getDate() + nextDayOffset);
+
+    // Планируем на ближайшую дату и далее с интервалом
+    let current = new Date(nextDate);
+    for (let i = 0; i < 10; i++) { // планируем на 10 уведомлений вперёд
+      const triggerTime = new Date(current);
+      triggerTime.setHours(notificationHour);
+      triggerTime.setMinutes(notificationMinute);
+      triggerTime.setSeconds(0);
+
+      // Если время уже прошло сегодня — переносим на следующий день
+      const now = new Date();
+      if (triggerTime <= now) {
+        triggerTime.setDate(triggerTime.getDate() + 1);
+      }
+
+      try {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `💊 Скоро приём: ${name}`,
+            body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+            sound: true,
+          },
+          trigger: {
+            date: triggerTime,
+          },
+        });
+        console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
+      } catch (e) {
+        console.error(`❌ Ошибка при планировании уведомления для ${name} на ${triggerTime}:`, e);
+      }
+
+      current.setDate(current.getDate() + intervalDays);
+    }
+  }
 }
 
 export default function Add() {
@@ -213,7 +310,10 @@ export default function Add() {
           med.name,
           med.form,
           time,
-          med.schedule_type === "daily"
+          med.schedule_type,
+          med.weekly_days,
+          med.interval_days,
+          med.start_date
         );
       }
 

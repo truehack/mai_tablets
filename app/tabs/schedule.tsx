@@ -1,3 +1,5 @@
+// app/(tabs)/schedule.tsx
+
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { View, FlatList, TouchableOpacity } from 'react-native';
 import { Text, Card, FAB } from 'react-native-paper';
@@ -111,10 +113,11 @@ export default function Schedule() {
     return medications.filter(m => isMedForSelectedDay(m, selectedDay));
   }, [medications, selectedDay]);
 
+  // ✅ Изменено: теперь ±8 недель (56 дней)
   const minDate = new Date();
-  minDate.setMonth(minDate.getMonth() - 1);
+  minDate.setDate(minDate.getDate() - 56); // 8 недель назад
   const maxDate = new Date();
-  maxDate.setMonth(maxDate.getMonth() + 1);
+  maxDate.setDate(maxDate.getDate() + 56); // 8 недель вперед
 
   const canGoBack = currentWeekStart > minDate;
   const canGoForward = currentWeekStart < maxDate;
@@ -143,81 +146,90 @@ export default function Schedule() {
 
   return (
     <Screen style={{ flex: 1, backgroundColor: '#121212', paddingHorizontal: 16, paddingTop: 20 }}>
-      {/* Панель с днями недели и кнопкой "Сегодня" */}
+      {/* Панель с днями недели, датой и кнопкой "Сегодня" */}
       <View style={{ marginBottom: 20 }}>
-        {/* Строка с днями недели */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+        {/* Строка с днями недели и стрелками */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          {/* Стрелка влево */}
           <TouchableOpacity onPress={goToPreviousWeek} disabled={!canGoBack}>
-            <Text style={{ color: canGoBack ? '#4A3AFF' : '#444', fontSize: 24, alignSelf: 'center' }}>
+            <Text style={{ color: canGoBack ? '#4A3AFF' : '#444', fontSize: 24 }}>
               {'\u25C0'}
             </Text>
           </TouchableOpacity>
 
-          <View style={{ flexDirection: 'row', justifyContent: 'space-around', flex: 1 }}>
-            {days.map((day, idx) => {
-              const date = getDateForDay(idx);
-              const dayNum = date.getDate();
-              const isSelected = selectedDay === day;
+          {/* Центральная часть: дни недели */}
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%' }}>
+              {days.map((day, idx) => {
+                const date = getDateForDay(idx);
+                const dayNum = date.getDate();
+                const isSelected = selectedDay === day;
 
-              return (
-                <TouchableOpacity key={day} onPress={() => setSelectedDay(day)}>
-                  <View style={{ alignItems: 'center' }}>
-                    <View
-                      style={{
-                        backgroundColor: isSelected ? '#4A3AFF' : '#1E1E1E',
-                        borderRadius: 25,
-                        width: 36,
-                        height: 36,
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <Text style={{ color: isSelected ? 'white' : '#aaa', fontWeight: '600' }}>{day}</Text>
+                return (
+                  <TouchableOpacity key={day} onPress={() => setSelectedDay(day)}>
+                    <View style={{ alignItems: 'center' }}>
+                      <View
+                        style={{
+                          backgroundColor: isSelected ? '#4A3AFF' : '#1E1E1E',
+                          borderRadius: 25,
+                          width: 36,
+                          height: 36,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Text style={{ color: isSelected ? 'white' : '#aaa', fontWeight: '600' }}>{day}</Text>
+                      </View>
+                      <Text style={{ color: '#aaa', fontSize: 12, marginTop: 4 }}>{dayNum}</Text>
                     </View>
-                    <Text style={{ color: '#aaa', fontSize: 12, marginTop: 4 }}>{dayNum}</Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
 
+          {/* Стрелка вправо */}
           <TouchableOpacity onPress={goToNextWeek} disabled={!canGoForward}>
-            <Text style={{ color: canGoForward ? '#4A3AFF' : '#444', fontSize: 24, alignSelf: 'center' }}>
+            <Text style={{ color: canGoForward ? '#4A3AFF' : '#444', fontSize: 24 }}>
               {'\u25B6'}
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Кнопка "Сегодня" — ИСПРАВЛЕНА: теперь выделяет настоящий сегодняшний день */}
-        <TouchableOpacity
-          onPress={() => {
-            // Сохраняем настоящую "сегодняшнюю" дату
-            const realToday = new Date();
+        {/* Строка с датой и кнопкой "Сегодня" — дата чуть правее */}
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          {/* Дата выбранного дня — по центру, чуть правее */}
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 10 }}> {/* ✅ Сдвиг вправо */}
+              {selectedDay && getDateForDay(days.indexOf(selectedDay)).toLocaleDateString('ru-RU')}
+            </Text>
+          </View>
 
-            // Вычисляем понедельник текущей недели БЕЗ изменения realToday
-            const day = realToday.getDay(); // 0 = воскресенье
-            const diff = realToday.getDate() - (day === 0 ? 6 : day - 1);
-            const currentMonday = new Date(realToday);
-            currentMonday.setDate(diff);
-            setCurrentWeekStart(currentMonday);
-
-            // Используем realToday для определения сегодняшнего дня недели
-            const todayIndex = realToday.getDay(); // ← теперь это действительно сегодня!
-            const todayDay = days[(todayIndex + 6) % 7]; // ПН первый
-            setSelectedDay(todayDay);
-          }}
-          style={{
-            backgroundColor: '#4A3AFF',
-            paddingHorizontal: 16,
-            paddingVertical: 8,
-            borderRadius: 12,
-            justifyContent: 'center',
-            alignItems: 'center',
-            alignSelf: 'center',
-          }}
-        >
-          <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Сегодня</Text>
-        </TouchableOpacity>
+          {/* Кнопка "Сегодня" — справа */}
+          <TouchableOpacity
+            onPress={() => {
+              const realToday = new Date();
+              const day = realToday.getDay();
+              const diff = realToday.getDate() - (day === 0 ? 6 : day - 1);
+              const currentMonday = new Date(realToday);
+              currentMonday.setDate(diff);
+              setCurrentWeekStart(currentMonday);
+              const todayIndex = realToday.getDay();
+              const todayDay = days[(todayIndex + 6) % 7];
+              setSelectedDay(todayDay);
+            }}
+            style={{
+              backgroundColor: '#4A3AFF',
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 12,
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>Сегодня</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Список лекарств */}
