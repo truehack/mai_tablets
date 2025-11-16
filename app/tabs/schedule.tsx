@@ -80,6 +80,22 @@ export default function Schedule() {
     const start = new Date(med.start_date);
     if (isNaN(start.getTime())) return false;
 
+    // ✅ Проверяем, что выбранный день >= даты начала (включительно)
+    const selectedDate = getDateForDay(days.indexOf(day)); // день, на который ты смотришь
+    const startDay = start.toISOString().split('T')[0];
+    const selectedDayStr = selectedDate.toISOString().split('T')[0];
+
+    if (selectedDayStr < startDay) return false;
+
+    // ✅ Проверяем, что дата окончания не раньше, чем выбранный день (включительно)
+    if (med.end_date) {
+      const end = new Date(med.end_date); // строка в формате YYYY-MM-DD
+      const endDay = end.toISOString().split('T')[0];
+
+      // Если выбранный день > даты окончания — не показываем
+      if (selectedDayStr > endDay) return false;
+    }
+
     if (med.schedule_type === 'daily') {
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
@@ -99,8 +115,7 @@ export default function Schedule() {
     }
 
     if (med.schedule_type === 'every_x_days' && med.start_date && med.interval_days) {
-      const targetDate = getDateForDay(days.indexOf(day));
-      const diffMs = targetDate.getTime() - start.getTime();
+      const diffMs = selectedDate.getTime() - start.getTime();
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       if (diffDays < 0) return false;
       return diffDays % med.interval_days === 0;
@@ -200,7 +215,7 @@ export default function Schedule() {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           {/* Дата выбранного дня — по центру, чуть правее */}
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 10 }}> {/* ✅ Сдвиг вправо */}
+            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 10 }}>
               {selectedDay && getDateForDay(days.indexOf(selectedDay)).toLocaleDateString('ru-RU')}
             </Text>
           </View>
