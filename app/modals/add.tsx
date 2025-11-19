@@ -47,38 +47,15 @@ async function scheduleMedicationNotification(
     }
   }
 
+  // Лог текущего времени
+  const now = new Date();
+  console.log(`⏰ Текущее время: ${now.toLocaleString()}`);
+  console.log(`⏰ Время приёма: ${hour}:${minute.toString().padStart(2, '0')}`);
+  console.log(`⏰ Время уведомления: ${notificationHour}:${notificationMinute.toString().padStart(2, '0')}`);
+
   // Если тип — daily
   if (scheduleType === 'daily') {
-    const now = new Date();
-    const triggerTime = new Date();
-    triggerTime.setHours(notificationHour);
-    triggerTime.setMinutes(notificationMinute);
-    triggerTime.setSeconds(0);
-
-    // Если время уже прошло — переносим на завтра
-    if (triggerTime <= now) {
-      triggerTime.setDate(triggerTime.getDate() + 1);
-    }
-
     try {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: `💊 Скоро приём: ${name}`,
-          body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
-          sound: true,
-        },
-        trigger: {
-          date: triggerTime,
-        },
-      });
-      console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
-    } catch (e) {
-      console.error(`❌ Ошибка при планировании уведомления для ${name}:`, e);
-    }
-  } else if (scheduleType === 'weekly_days' && weeklyDays) {
-    // Планируем уведомления на конкретные дни недели
-    for (const day of weeklyDays) {
-      const now = new Date();
       const triggerTime = new Date();
       triggerTime.setHours(notificationHour);
       triggerTime.setMinutes(notificationMinute);
@@ -89,7 +66,44 @@ async function scheduleMedicationNotification(
         triggerTime.setDate(triggerTime.getDate() + 1);
       }
 
+      console.log(`✅ Уведомление запланировано для ${name} на ${triggerTime.toLocaleString()}`);
+
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: `💊 Скоро приём: ${name}`,
+          body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+          sound: true,
+        },
+        trigger: {
+          type: 'calendar', // ✅ Обязательное свойство
+          hour: triggerTime.getHours(),
+          minute: triggerTime.getMinutes(),
+          repeats: true,
+        },
+      });
+      console.log(`✅ Уведомление запланировано для ${name} ежедневно на ${triggerTime.toLocaleTimeString()}`);
+    } catch (e) {
+      console.error(`❌ Ошибка при планировании уведомления для ${name}:`, e);
+    }
+  } else if (scheduleType === 'weekly_days' && weeklyDays) {
+    // Планируем уведомления на конкретные дни недели
+    for (const day of weeklyDays) {
+      const dayIndex = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'].indexOf(day);
+      if (dayIndex === -1) continue;
+
       try {
+        const triggerTime = new Date();
+        triggerTime.setHours(notificationHour);
+        triggerTime.setMinutes(notificationMinute);
+        triggerTime.setSeconds(0);
+
+        // Если время уже прошло — переносим на следующий день
+        if (triggerTime <= now) {
+          triggerTime.setDate(triggerTime.getDate() + 1);
+        }
+
+        console.log(`✅ Уведомление запланировано для ${name} на ${day} в ${triggerTime.toLocaleString()}`);
+
         await Notifications.scheduleNotificationAsync({
           content: {
             title: `💊 Скоро приём: ${name}`,
@@ -97,10 +111,14 @@ async function scheduleMedicationNotification(
             sound: true,
           },
           trigger: {
-            date: triggerTime,
+            type: 'calendar', // ✅ Обязательное свойство
+            weekday: dayIndex + 1, // 1 = ПН, 7 = ВС
+            hour: triggerTime.getHours(),
+            minute: triggerTime.getMinutes(),
+            repeats: true,
           },
         });
-        console.log(`⏰ Уведомление запланировано для ${name} на ${day} в ${triggerTime}`);
+        console.log(`✅ Уведомление запланировано для ${name} на ${day} в ${triggerTime.toLocaleTimeString()}`);
       } catch (e) {
         console.error(`❌ Ошибка при планировании уведомления для ${name} на ${day}:`, e);
       }
@@ -127,10 +145,11 @@ async function scheduleMedicationNotification(
       triggerTime.setSeconds(0);
 
       // Если время уже прошло сегодня — переносим на следующий день
-      const now = new Date();
       if (triggerTime <= now) {
         triggerTime.setDate(triggerTime.getDate() + 1);
       }
+
+      console.log(`✅ Уведомление запланировано для ${name} на ${triggerTime.toLocaleString()}`);
 
       try {
         await Notifications.scheduleNotificationAsync({
@@ -143,7 +162,7 @@ async function scheduleMedicationNotification(
             date: triggerTime,
           },
         });
-        console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
+        console.log(`✅ Уведомление запланировано для ${name} на ${triggerTime.toLocaleString()}`);
       } catch (e) {
         console.error(`❌ Ошибка при планировании уведомления для ${name} на ${triggerTime}:`, e);
       }
@@ -160,6 +179,7 @@ export default function Add() {
   const [name, setName] = useState("");
   const [form, setForm] = useState<Medication["form"]>("tablet");
   const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState(""); // ✅ Новое поле
   const [scheduleType, setScheduleType] =
     useState<Medication["schedule_type"]>("daily");
   const [timesList, setTimesList] = useState("");
@@ -171,6 +191,7 @@ export default function Add() {
   const [nameError, setNameError] = useState("");
   const [formError, setFormError] = useState("");
   const [startDateError, setStartDateError] = useState("");
+  const [endDateError, setEndDateError] = useState(""); // ✅ Новое состояние
   const [scheduleTypeError, setScheduleTypeError] = useState("");
   const [timesListError, setTimesListError] = useState("");
   const [intervalDaysError, setIntervalDaysError] = useState("");
@@ -189,8 +210,8 @@ export default function Add() {
     return regex.test(time.trim());
   };
 
-  // ✅ Валидация даты ДД.ММ.ГГГГ (без строгой проверки существования)
-  const validateDate = (dateStr: string): boolean => {
+  // ✅ Валидация даты ДД.ММ.ГГГГ + проверка, что end_date >= start_date
+  const validateDate = (dateStr: string, startDate?: string): boolean => {
     if (!dateStr) return false;
     const regex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
     if (!regex.test(dateStr)) return false;
@@ -205,6 +226,19 @@ export default function Add() {
     if (day < 1 || day > 31) return false;
     if (month < 1 || month > 12) return false;
     if (year < 1900 || year > 2100) return false;
+
+    // Если есть дата начала — проверяем, что end_date >= start_date
+    if (startDate) {
+      const startParts = startDate.split('.');
+      const [startDay, startMonth, startYear] = startParts.map(Number);
+
+      const startDateObj = new Date(`${startYear}-${startMonth.toString().padStart(2, '0')}-${startDay.toString().padStart(2, '0')}`);
+      const endDateObj = new Date(`${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`);
+
+      if (endDateObj < startDateObj) {
+        return false;
+      }
+    }
 
     return true;
   };
@@ -221,6 +255,7 @@ export default function Add() {
     setNameError("");
     setFormError("");
     setStartDateError("");
+    setEndDateError(""); // ✅ Сбрасываем ошибку даты окончания
     setScheduleTypeError("");
     setTimesListError("");
     setIntervalDaysError("");
@@ -246,6 +281,11 @@ export default function Add() {
       hasErrors = true;
     } else if (!validateDate(startDate)) {
       setStartDateError("Формат: ДД.ММ.ГГГГ, например 13.11.2025");
+      hasErrors = true;
+    }
+
+    if (endDate && !validateDate(endDate, startDate)) {
+      setEndDateError("Дата окончания должна быть больше или равна дате начала");
       hasErrors = true;
     }
 
@@ -285,17 +325,23 @@ export default function Add() {
 
     if (hasErrors) return;
 
-    // Конвертируем дату в YYYY-MM-DD
-    const [day, month, year] = startDate.split('.').map(Number);
-    const convertedDate = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+    // Конвертируем даты в YYYY-MM-DD
+    const [startDay, startMonth, startYear] = startDate.split('.').map(Number);
+    const convertedStartDate = `${startYear}-${startMonth.toString().padStart(2, '0')}-${startDay.toString().padStart(2, '0')}`;
+
+    let convertedEndDate = null;
+    if (endDate) {
+      const [endDay, endMonth, endYear] = endDate.split('.').map(Number);
+      convertedEndDate = `${endYear}-${endMonth.toString().padStart(2, '0')}-${endDay.toString().padStart(2, '0')}`;
+    }
 
     try {
       const med: Medication = {
         name,
         form,
         instructions: instructions || null,
-        start_date: convertedDate,
-        end_date: null,
+        start_date: convertedStartDate,
+        end_date: convertedEndDate,
         schedule_type: scheduleType,
         weekly_days: scheduleType === "weekly_days" ? selectedDays : null,
         interval_days: scheduleType === "every_x_days" ? parseInt(intervalDays, 10) : null,
@@ -409,6 +455,20 @@ export default function Add() {
         error={!!startDateError}
       />
       {startDateError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{startDateError}</Text> : null}
+
+      {/* Поле для даты окончания */}
+      <TextInput
+        label="Дата окончания (ДД.ММ.ГГГГ, по желанию)"
+        value={endDate}
+        onChangeText={setEndDate}
+        mode="outlined"
+        style={{ marginBottom: 8, backgroundColor: "#121212" }}
+        textColor="white"
+        outlineColor="#444"
+        activeOutlineColor="#4A3AFF"
+        error={!!endDateError}
+      />
+      {endDateError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{endDateError}</Text> : null}
 
       {/* Выбор типа расписания */}
       <Menu
