@@ -1,5 +1,3 @@
-// app/(tabs)/schedule.tsx
-
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { View, FlatList, TouchableOpacity } from 'react-native';
 import { Text, Card, FAB } from 'react-native-paper';
@@ -21,7 +19,6 @@ export default function Schedule() {
     return new Date(today.setDate(diff));
   });
   const [selectedDay, setSelectedDay] = useState<string>('');
-
   const days = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
 
   useEffect(() => {
@@ -65,16 +62,53 @@ export default function Schedule() {
         intake.medication_id === medicationId &&
         intake.datetime.startsWith(dateStr)
     );
+    
+    // 1. Проверяем на переносы
+    const rescheduledIntake = dayIntakes.find(intake => 
+      intake.notes && intake.notes.includes('перенесен на')
+    );
+    
+    if (rescheduledIntake) {
+      const match = rescheduledIntake.notes.match(/перенесен на (\d{2}\.\d{2}\.\d{4}) (\d{2}:\d{2})/);
+      if (match) {
+        return { 
+          status: `Перенесено на ${match[2]}`, 
+          time: match[2],
+          color: '#4A3AFF',
+          isRescheduled: true
+        };
+      }
+    }
+    
+    // 2. Проверяем на отложенные приемы (перенесенные сюда)
+    const deferredIntake = dayIntakes.find(intake => 
+      intake.notes && intake.notes.includes('перенос из')
+    );
+    
+    if (deferredIntake) {
+      const match = deferredIntake.notes.match(/перенос из (\d{2}:\d{2})/);
+      if (match) {
+        return { 
+          status: `Перенесено из ${match[1]}`, 
+          time: new Date(deferredIntake.datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          color: '#4A3AFF',
+          isRescheduled: true
+        };
+      }
+    }
+    
+    // 3. Проверяем на обычные приемы
     const lastIntake = dayIntakes[0];
     if (lastIntake) {
       const time = new Date(lastIntake.datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       if (lastIntake.taken) {
-        return { status: 'Принято', time, color: '#34C759' }; // ✅ Зелёный
+        return { status: 'Принято', time, color: '#34C759', isRescheduled: false };
       } else if (lastIntake.skipped) {
-        return { status: 'Пропущено', time, color: '#FF9500' }; // ✅ Оранжевый
+        return { status: 'Пропущено', time, color: '#FF9500', isRescheduled: false };
       }
     }
-    return { status: 'Не принято', time: null, color: '#FF3B30' }; // ✅ Красный
+    
+    return { status: 'Не принято', time: null, color: '#FF3B30', isRescheduled: false };
   };
 
   const getDateForDay = (dayIndex: number) => {
@@ -88,14 +122,14 @@ export default function Schedule() {
     const start = new Date(med.start_date);
     if (isNaN(start.getTime())) return false;
 
-    // ✅ Проверяем, что выбранный день >= даты начала (включительно)
+    // Проверяем, что выбранный день >= даты начала (включительно)
     const selectedDate = getDateForDay(days.indexOf(day)); // день, на который ты смотришь
     const startDay = start.toISOString().split('T')[0];
     const selectedDayStr = selectedDate.toISOString().split('T')[0];
 
     if (selectedDayStr < startDay) return false;
 
-    // ✅ Проверяем, что дата окончания не раньше, чем выбранный день (включительно)
+    // Проверяем, что дата окончания не раньше, чем выбранный день (включительно)
     if (med.end_date) {
       const end = new Date(med.end_date); // строка в формате YYYY-MM-DD
       const endDay = end.toISOString().split('T')[0];
@@ -104,6 +138,7 @@ export default function Schedule() {
       if (selectedDayStr > endDay) return false;
     }
 
+    // Проверяем расписание
     if (med.schedule_type === 'daily') {
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
@@ -130,6 +165,16 @@ export default function Schedule() {
       return diffDays % med.interval_days === 0;
     }
 
+    // Дополнительно проверяем, не было ли переноса на этот день
+    if (intakeHistory.some(intake => 
+      intake.medication_id === med.id && 
+      intake.notes && 
+      intake.notes.includes('перенесен на') &&
+      intake.notes.includes(selectedDayStr)
+    )) {
+      return true;
+    }
+
     return false;
   };
 
@@ -137,7 +182,7 @@ export default function Schedule() {
     return medications.filter(m => isMedForSelectedDay(m, selectedDay));
   }, [medications, selectedDay]);
 
-  // ✅ Изменено: теперь ±8 недель (56 дней)
+  // Изменено: теперь ±8 недель (56 дней)
   const minDate = new Date();
   minDate.setDate(minDate.getDate() - 56); // 8 недель назад
   const maxDate = new Date();
