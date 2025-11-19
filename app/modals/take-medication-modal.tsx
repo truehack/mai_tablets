@@ -3,13 +3,13 @@ import { View, Text, Alert, TouchableOpacity } from 'react-native';
 import { Card, Button, Portal, Modal, Provider, Surface, Icon } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useDatabase } from '@/hooks/use-database';
-import * as Notifications from 'expo-notifications';
 
 export default function TakeMedicationModal() {
   const { medicationId, plannedTime } = useLocalSearchParams();
   const router = useRouter();
   const { getMedications, addIntake, deleteMedication, deleteFutureIntakes } = useDatabase();
   const [medication, setMedication] = useState<any>(null);
+  
   useEffect(() => {
     const loadMed = async () => {
       try {
@@ -30,6 +30,7 @@ export default function TakeMedicationModal() {
     };
     loadMed();
   }, [medicationId, getMedications]);
+
   const handleMarkAsTaken = async () => {
     try {
       await addIntake({
@@ -44,6 +45,7 @@ export default function TakeMedicationModal() {
       console.error('Ошибка при отметке приёма:', error);
     }
   };
+
   const handleMarkAsSkipped = async () => {
     try {
       await addIntake({
@@ -58,12 +60,15 @@ export default function TakeMedicationModal() {
       console.error('Ошибка при отметке пропуска:', error);
     }
   };
+
   const handleCancel = () => {
     router.back();
   };
+
   const handleReschedule = () => {
     router.push(`/modals/reschedule-modal?medicationId=${medicationId}&plannedTime=${encodeURIComponent(plannedTime as string)}`);
   };
+
   const handleDelete = async () => {
     console.log('handleDelete вызван!');
     console.log('medicationId:', medicationId);
@@ -103,6 +108,7 @@ export default function TakeMedicationModal() {
       ]
     );
   };
+
   if (!medication) {
     return (
       <Provider>
@@ -118,6 +124,7 @@ export default function TakeMedicationModal() {
       </Provider>
     );
   }
+
   return (
     <Provider>
       <Portal>

@@ -63,7 +63,7 @@ export default function Schedule() {
         intake.datetime.startsWith(dateStr)
     );
     
-    // 1. Проверяем на переносы
+    // Проверяем, был ли прием перенесен
     const rescheduledIntake = dayIntakes.find(intake => 
       intake.notes && intake.notes.includes('перенесен на')
     );
@@ -71,16 +71,17 @@ export default function Schedule() {
     if (rescheduledIntake) {
       const match = rescheduledIntake.notes.match(/перенесен на (\d{2}\.\d{2}\.\d{4}) (\d{2}:\d{2})/);
       if (match) {
+        const [_, formattedDate, formattedTime] = match;
         return { 
-          status: `Перенесено на ${match[2]}`, 
-          time: match[2],
+          status: `Перенесено на ${formattedDate} ${formattedTime}`, 
+          time: formattedTime,
           color: '#4A3AFF',
           isRescheduled: true
         };
       }
     }
     
-    // 2. Проверяем на отложенные приемы (перенесенные сюда)
+    // Проверяем, есть ли перенесенный прием на эту дату
     const deferredIntake = dayIntakes.find(intake => 
       intake.notes && intake.notes.includes('перенос из')
     );
@@ -88,8 +89,9 @@ export default function Schedule() {
     if (deferredIntake) {
       const match = deferredIntake.notes.match(/перенос из (\d{2}:\d{2})/);
       if (match) {
+        const [_, originalTime] = match;
         return { 
-          status: `Перенесено из ${match[1]}`, 
+          status: `Перенос из ${originalTime}`, 
           time: new Date(deferredIntake.datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           color: '#4A3AFF',
           isRescheduled: true
@@ -97,7 +99,7 @@ export default function Schedule() {
       }
     }
     
-    // 3. Проверяем на обычные приемы
+    // Проверяем обычные приемы
     const lastIntake = dayIntakes[0];
     if (lastIntake) {
       const time = new Date(lastIntake.datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -163,16 +165,6 @@ export default function Schedule() {
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       if (diffDays < 0) return false;
       return diffDays % med.interval_days === 0;
-    }
-
-    // Дополнительно проверяем, не было ли переноса на этот день
-    if (intakeHistory.some(intake => 
-      intake.medication_id === med.id && 
-      intake.notes && 
-      intake.notes.includes('перенесен на') &&
-      intake.notes.includes(selectedDayStr)
-    )) {
-      return true;
     }
 
     return false;
@@ -284,8 +276,8 @@ export default function Schedule() {
               currentMonday.setDate(diff);
               setCurrentWeekStart(currentMonday);
               const todayIndex = realToday.getDay();
-              const todayDay = days[(todayIndex + 6) % 7];
-              setSelectedDay(todayDay);
+              const today = days[(todayIndex + 6) % 7];
+              setSelectedDay(today);
             }}
             style={{
               backgroundColor: '#4A3AFF',
@@ -336,7 +328,6 @@ export default function Schedule() {
               <View style={{ marginBottom: 16 }}>
                 <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
                   {times}{' '}
-                  <Text style={{ color: '#aaa', fontWeight: '500' }}>|</Text>{' '}
                   <Text style={{ color: statusColor, fontWeight: '500' }}>
                     {statusInfo.status}{statusInfo.time ? ` в ${statusInfo.time}` : ''}
                   </Text>

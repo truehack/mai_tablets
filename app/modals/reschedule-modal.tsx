@@ -17,11 +17,11 @@ export default function RescheduleModal() {
   const [medication, setMedication] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // Правильное объявление ref-ов
-  const monthInput = useRef(null);
-  const yearInput = useRef(null);
-  const hoursInput = useRef(null);
-  const minutesInput = useRef(null);
+  const dayInput = useRef<TextInput>(null);
+  const monthInput = useRef<TextInput>(null);
+  const yearInput = useRef<TextInput>(null);
+  const hoursInput = useRef<TextInput>(null);
+  const minutesInput = useRef<TextInput>(null);
 
   useEffect(() => {
     const loadMed = async () => {
@@ -42,7 +42,16 @@ export default function RescheduleModal() {
     loadMed();
   }, [medicationId]);
 
-  // Валидация отдельных полей
+  // Автозаполнение текущей даты при открытии
+  useEffect(() => {
+    if (!loading) {
+      const today = new Date();
+      setDay(today.getDate().toString().padStart(2, '0'));
+      setMonth((today.getMonth() + 1).toString().padStart(2, '0'));
+      setYear(today.getFullYear().toString());
+    }
+  }, [loading]);
+
   const validateDay = (value: string): boolean => {
     if (!value) return false;
     const dayNum = parseInt(value);
@@ -109,7 +118,6 @@ export default function RescheduleModal() {
   };
 
   const handleConfirm = async () => {
-    // Скрываем клавиатуру перед обработкой
     Keyboard.dismiss();
     
     if (!validateAllFields()) {
@@ -122,7 +130,7 @@ export default function RescheduleModal() {
       const formattedTime = `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`;
       const formattedDateTime = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:00.000Z`;
       
-      // 1. Создаем запись о переносе в текущем времени
+      // 1. Создаем запись о переносе оригинального приема
       await addIntake({
         medication_id: Number(medicationId),
         planned_time: plannedTime as string,
@@ -142,7 +150,6 @@ export default function RescheduleModal() {
         notes: `перенос из ${plannedTime}`
       });
 
-      // 3. Показываем подтверждение
       Alert.alert(
         'Перенос подтвержден',
         `Прием перенесен на ${formattedDate} в ${formattedTime}`,
@@ -154,36 +161,6 @@ export default function RescheduleModal() {
       setError('Не удалось перенести прием');
     }
   };
-
-  const renderInputField = (
-    label: string,
-    value: string,
-    onChangeText: (text: string) => void,
-    keyboardType: "default" | "numeric" | "email-address" | "phone-pad" = 'numeric',
-    maxLength: number = 2,
-    placeholder?: string
-  ) => (
-    <View style={{ marginBottom: 12 }}>
-      <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>{label}</Text>
-      <TextInput
-        style={{
-          backgroundColor: '#2C2C2C',
-          color: 'white',
-          padding: 12,
-          borderRadius: 8,
-          borderWidth: 1,
-          borderColor: error ? '#FF3B30' : '#333',
-        }}
-        placeholder={placeholder || ''}
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType={keyboardType}
-        maxLength={maxLength}
-        placeholderTextColor="#666"
-        returnKeyType="next"
-      />
-    </View>
-  );
 
   if (loading) {
     return (
@@ -251,6 +228,7 @@ export default function RescheduleModal() {
                   <View style={{ flex: 1, marginRight: 8 }}>
                     <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>День</Text>
                     <TextInput
+                      ref={dayInput}
                       style={{
                         backgroundColor: '#2C2C2C',
                         color: 'white',
@@ -267,12 +245,12 @@ export default function RescheduleModal() {
                       placeholderTextColor="#666"
                       returnKeyType="next"
                       onSubmitEditing={() => monthInput.current?.focus()}
-                      ref={monthInput}
                     />
                   </View>
                   <View style={{ flex: 1, marginHorizontal: 4 }}>
                     <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Месяц</Text>
                     <TextInput
+                      ref={monthInput}
                       style={{
                         backgroundColor: '#2C2C2C',
                         color: 'white',
@@ -289,12 +267,12 @@ export default function RescheduleModal() {
                       placeholderTextColor="#666"
                       returnKeyType="next"
                       onSubmitEditing={() => yearInput.current?.focus()}
-                      ref={yearInput}
                     />
                   </View>
                   <View style={{ flex: 1, marginLeft: 8 }}>
                     <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Год</Text>
                     <TextInput
+                      ref={yearInput}
                       style={{
                         backgroundColor: '#2C2C2C',
                         color: 'white',
@@ -311,7 +289,6 @@ export default function RescheduleModal() {
                       placeholderTextColor="#666"
                       returnKeyType="next"
                       onSubmitEditing={() => hoursInput.current?.focus()}
-                      ref={hoursInput}
                     />
                   </View>
                 </View>
@@ -330,6 +307,7 @@ export default function RescheduleModal() {
                   <View style={{ flex: 1, marginRight: 8 }}>
                     <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Часы</Text>
                     <TextInput
+                      ref={hoursInput}
                       style={{
                         backgroundColor: '#2C2C2C',
                         color: 'white',
@@ -346,12 +324,12 @@ export default function RescheduleModal() {
                       placeholderTextColor="#666"
                       returnKeyType="next"
                       onSubmitEditing={() => minutesInput.current?.focus()}
-                      ref={minutesInput}
                     />
                   </View>
                   <View style={{ flex: 1, marginLeft: 8 }}>
                     <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Минуты</Text>
                     <TextInput
+                      ref={minutesInput}
                       style={{
                         backgroundColor: '#2C2C2C',
                         color: 'white',
