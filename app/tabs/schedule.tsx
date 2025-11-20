@@ -81,7 +81,7 @@ export default function Schedule() {
         const [_, formattedDate, formattedTime] = match;
         return { 
           status: `Перенесено на ${formattedDate} ${formattedTime}`, 
-          time: formattedTime,
+          time: null, // Don't show time again since it's already in the status
           color: '#4A3AFF',
           isRescheduled: true
         };
