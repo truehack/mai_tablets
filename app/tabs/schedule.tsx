@@ -1,8 +1,7 @@
 // app/(tabs)/schedule.tsx
-
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { View, FlatList, TouchableOpacity } from 'react-native';
-import { Text, Card, FAB } from 'react-native-paper';
+import { Text, Card, FAB, Icon } from 'react-native-paper'; // ✅ добавлен Icon
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/screen';
@@ -16,8 +15,8 @@ export default function Schedule() {
   const [loading, setLoading] = useState(true);
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
     const today = new Date();
-    const day = today.getDay(); // 0 = воскресенье
-    const diff = today.getDate() - (day === 0 ? 6 : day - 1); // Понедельник
+    const day = today.getDay();
+    const diff = today.getDate() - (day === 0 ? 6 : day - 1);
     return new Date(today.setDate(diff));
   });
   const [selectedDay, setSelectedDay] = useState<string>('');
@@ -25,8 +24,8 @@ export default function Schedule() {
   const days = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
 
   useEffect(() => {
-    const todayIndex = new Date().getDay(); // 0 = Sunday
-    const today = days[(todayIndex + 6) % 7]; // ПН первый
+    const todayIndex = new Date().getDay();
+    const today = days[(todayIndex + 6) % 7];
     setSelectedDay(today);
   }, []);
 
@@ -58,15 +57,36 @@ export default function Schedule() {
     }, [loadMeds, loadHistory])
   );
 
-  const getIntakeStatusForDate = (medicationId: number, date: Date) => {
+  // ✅ Новая функция: получает статус + время последнего приёма за день
+  const getIntakeStatusWithTime = (medicationId: number, date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
     const dayIntakes = intakeHistory.filter(
       intake =>
         intake.medication_id === medicationId &&
         intake.datetime.startsWith(dateStr)
     );
-    const lastIntake = dayIntakes[0];
-    return lastIntake ? (lastIntake.taken ? 'Принято' : 'Пропущено') : 'Не принято';
+
+    if (dayIntakes.length === 0) {
+      return { status: 'Не принято', time: null, color: '#FF3B30' };
+    }
+
+    // Берём самый свежий приём за день
+    const latestIntake = dayIntakes.reduce((a, b) => 
+      new Date(a.datetime) > new Date(b.datetime) ? a : b
+    );
+
+    const time = new Date(latestIntake.datetime).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    if (latestIntake.taken) {
+      return { status: 'Принято', time, color: '#34C759' };
+    } else if (latestIntake.skipped) {
+      return { status: 'Пропущено', time, color: '#FF9500' };
+    } else {
+      return { status: 'Неизвестно', time, color: '#999' };
+    }
   };
 
   const getDateForDay = (dayIndex: number) => {
@@ -113,11 +133,10 @@ export default function Schedule() {
     return medications.filter(m => isMedForSelectedDay(m, selectedDay));
   }, [medications, selectedDay]);
 
-  // ✅ Изменено: теперь ±8 недель (56 дней)
   const minDate = new Date();
-  minDate.setDate(minDate.getDate() - 56); // 8 недель назад
+  minDate.setDate(minDate.getDate() - 56);
   const maxDate = new Date();
-  maxDate.setDate(maxDate.getDate() + 56); // 8 недель вперед
+  maxDate.setDate(maxDate.getDate() + 56);
 
   const canGoBack = currentWeekStart > minDate;
   const canGoForward = currentWeekStart < maxDate;
@@ -146,18 +165,15 @@ export default function Schedule() {
 
   return (
     <Screen style={{ flex: 1, backgroundColor: '#121212', paddingHorizontal: 16, paddingTop: 20 }}>
-      {/* Панель с днями недели, датой и кнопкой "Сегодня" */}
+      {/* Панель с днями недели */}
       <View style={{ marginBottom: 20 }}>
-        {/* Строка с днями недели и стрелками */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          {/* Стрелка влево */}
           <TouchableOpacity onPress={goToPreviousWeek} disabled={!canGoBack}>
             <Text style={{ color: canGoBack ? '#4A3AFF' : '#444', fontSize: 24 }}>
               {'\u25C0'}
             </Text>
           </TouchableOpacity>
 
-          {/* Центральная часть: дни недели */}
           <View style={{ flex: 1, alignItems: 'center' }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%' }}>
               {days.map((day, idx) => {
@@ -188,7 +204,6 @@ export default function Schedule() {
             </View>
           </View>
 
-          {/* Стрелка вправо */}
           <TouchableOpacity onPress={goToNextWeek} disabled={!canGoForward}>
             <Text style={{ color: canGoForward ? '#4A3AFF' : '#444', fontSize: 24 }}>
               {'\u25B6'}
@@ -196,16 +211,13 @@ export default function Schedule() {
           </TouchableOpacity>
         </View>
 
-        {/* Строка с датой и кнопкой "Сегодня" — дата чуть правее */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          {/* Дата выбранного дня — по центру, чуть правее */}
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 10 }}> {/* ✅ Сдвиг вправо */}
+            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 10 }}>
               {selectedDay && getDateForDay(days.indexOf(selectedDay)).toLocaleDateString('ru-RU')}
             </Text>
           </View>
 
-          {/* Кнопка "Сегодня" — справа */}
           <TouchableOpacity
             onPress={() => {
               const realToday = new Date();
@@ -239,14 +251,15 @@ export default function Schedule() {
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => {
           const selectedDate = getDateForDay(days.indexOf(selectedDay));
-          const status = getIntakeStatusForDate(item.id, selectedDate);
-          const statusColor = status === 'Принято' ? '#34C759' : status === 'Пропущено' ? '#FF9500' : '#FF3B30';
+          const { status, time, color } = getIntakeStatusWithTime(item.id, selectedDate);
+          
           const times =
             typeof item.times_list === 'string'
               ? item.times_list
               : Array.isArray(item.times_list)
               ? item.times_list.join(', ')
               : '—';
+          
           const icon =
             item.form === 'tablet'
               ? '💊'
@@ -265,10 +278,23 @@ export default function Schedule() {
               }
             >
               <View style={{ marginBottom: 16 }}>
-                <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
-                  {times}{' '}
-                  <Text style={{ color: statusColor, fontWeight: '500' }}>{status}</Text>
-                </Text>
+                {/* ✅ Строка времени + статуса с иконкой */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Text style={{ color: '#aaa', fontSize: 14, fontWeight: '600', marginRight: 6 }}>
+                    {times}
+                  </Text>
+                  
+                  {/* Иконка статуса */}
+                  {status === 'Принято' && <Icon source="check-circle" size={16} color={color} />}
+                  {status === 'Пропущено' && <Icon source="close-circle" size={16} color={color} />}
+                  {status === 'Не принято' && <Icon source="clock-outline" size={16} color={color} />}
+                  
+                  {/* Текст статуса + время */}
+                  <Text style={{ color: color, fontSize: 14, fontWeight: '500', marginLeft: 4 }}>
+                    {status}
+                    {time && ` в ${time}`}
+                  </Text>
+                </View>
 
                 <Card
                   mode="contained"

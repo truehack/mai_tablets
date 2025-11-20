@@ -1,310 +1,229 @@
 // app/modals/add.tsx
-
-import React, { useState } from "react";
-import { View, TouchableOpacity } from "react-native";
+import React, { useState, useCallback, useRef } from "react";
+import { View, TouchableOpacity, Alert } from "react-native";
 import {
   Button,
   Text,
   TextInput,
   Menu,
-  Divider,
-  Portal,
+  HelperText,
 } from "react-native-paper";
 import { Screen } from "@/components/screen";
 import { useNavigation } from "@react-navigation/native";
 import { useDatabase, Medication } from "@/hooks/use-database";
 import * as Notifications from "expo-notifications";
+import apiClient from "@/services/api";
+import { getLocalUser } from "@/services/localUser.service";
 
 const daysOfWeek = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
 
-// 🔔 вспомогательная функция для уведомлений за 10 минут до приёма
+// 🔔 Планирование уведомлений (без изменений)
 async function scheduleMedicationNotification(
   name: string,
   form: string,
   time: string,
-  scheduleType: Medication['schedule_type'],
+  scheduleType: Medication["schedule_type"],
   weeklyDays?: string[],
   intervalDays?: number,
   startDate?: string
 ) {
   const [hour, minute] = time.split(":").map(Number);
-  if (isNaN(hour) || isNaN(minute)) {
-    console.log(`⏰ Ошибка: время ${time} некорректно`);
-    return;
-  }
+  if (isNaN(hour) || isNaN(minute)) return;
 
-  // Вычисляем время уведомления: за 10 минут до приёма
   let notificationHour = hour;
   let notificationMinute = minute - 10;
-
-  // Если минуты < 0 — переносим на предыдущий час
   if (notificationMinute < 0) {
     notificationMinute += 60;
     notificationHour -= 1;
-    // Если час < 0 — переносим на предыдущий день
-    if (notificationHour < 0) {
-      notificationHour = 23;
-    }
+    if (notificationHour < 0) notificationHour = 23;
   }
 
-  // Если тип — daily
-  if (scheduleType === 'daily') {
+  if (scheduleType === "daily") {
     const now = new Date();
     const triggerTime = new Date();
     triggerTime.setHours(notificationHour);
     triggerTime.setMinutes(notificationMinute);
-    triggerTime.setSeconds(0);
+    if (triggerTime <= now) triggerTime.setDate(triggerTime.getDate() + 1);
 
-    // Если время уже прошло — переносим на завтра
-    if (triggerTime <= now) {
-      triggerTime.setDate(triggerTime.getDate() + 1);
-    }
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: `💊 Скоро приём: ${name}`,
+        body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+        sound: true,
+      },
+      trigger: { date: triggerTime },
+    });
+  } else if (scheduleType === "weekly_days" && weeklyDays) {
+    for (const day of weeklyDays) {
+      const now = new Date();
+      const triggerTime = new Date();
+      triggerTime.setHours(notificationHour);
+      triggerTime.setMinutes(notificationMinute);
+      if (triggerTime <= now) triggerTime.setDate(triggerTime.getDate() + 1);
 
-    try {
       await Notifications.scheduleNotificationAsync({
         content: {
           title: `💊 Скоро приём: ${name}`,
           body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
           sound: true,
         },
-        trigger: {
-          date: triggerTime,
-        },
+        trigger: { date: triggerTime },
       });
-      console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
-    } catch (e) {
-      console.error(`❌ Ошибка при планировании уведомления для ${name}:`, e);
     }
-  } else if (scheduleType === 'weekly_days' && weeklyDays) {
-    // Планируем уведомления на конкретные дни недели
-    for (const day of weeklyDays) {
-      const now = new Date();
-      const triggerTime = new Date();
-      triggerTime.setHours(notificationHour);
-      triggerTime.setMinutes(notificationMinute);
-      triggerTime.setSeconds(0);
-
-      // Если время уже прошло — переносим на завтра
-      if (triggerTime <= now) {
-        triggerTime.setDate(triggerTime.getDate() + 1);
-      }
-
-      try {
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: `💊 Скоро приём: ${name}`,
-            body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
-            sound: true,
-          },
-          trigger: {
-            date: triggerTime,
-          },
-        });
-        console.log(`⏰ Уведомление запланировано для ${name} на ${day} в ${triggerTime}`);
-      } catch (e) {
-        console.error(`❌ Ошибка при планировании уведомления для ${name} на ${day}:`, e);
-      }
-    }
-  } else if (scheduleType === 'every_x_days' && intervalDays && startDate) {
-    // Планируем уведомления на дни, кратные intervalDays, начиная с startDate
+  } else if (scheduleType === "every_x_days" && intervalDays && startDate) {
     const start = new Date(startDate);
     const today = new Date();
-    const diffMs = today.getTime() - start.getTime();
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
+    const diffDays = Math.ceil((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
     let nextDayOffset = intervalDays - (diffDays % intervalDays);
-    if (nextDayOffset === intervalDays) nextDayOffset = 0; // если сегодня совпадает
+    if (nextDayOffset === intervalDays) nextDayOffset = 0;
 
-    const nextDate = new Date(today);
-    nextDate.setDate(today.getDate() + nextDayOffset);
+    let current = new Date(today);
+    current.setDate(today.getDate() + nextDayOffset);
 
-    // Планируем на ближайшую дату и далее с интервалом
-    let current = new Date(nextDate);
-    for (let i = 0; i < 10; i++) { // планируем на 10 уведомлений вперёд
+    for (let i = 0; i < 10; i++) {
       const triggerTime = new Date(current);
       triggerTime.setHours(notificationHour);
       triggerTime.setMinutes(notificationMinute);
-      triggerTime.setSeconds(0);
+      if (triggerTime <= today) triggerTime.setDate(triggerTime.getDate() + 1);
 
-      // Если время уже прошло сегодня — переносим на следующий день
-      const now = new Date();
-      if (triggerTime <= now) {
-        triggerTime.setDate(triggerTime.getDate() + 1);
-      }
-
-      try {
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: `💊 Скоро приём: ${name}`,
-            body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
-            sound: true,
-          },
-          trigger: {
-            date: triggerTime,
-          },
-        });
-        console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
-      } catch (e) {
-        console.error(`❌ Ошибка при планировании уведомления для ${name} на ${triggerTime}:`, e);
-      }
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: `💊 Скоро приём: ${name}`,
+          body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+          sound: true,
+        },
+        trigger: { date: triggerTime },
+      });
 
       current.setDate(current.getDate() + intervalDays);
     }
   }
 }
 
+// 🔁 Маппинг: "ПН" → 1, "ВТ" → 2, ..., "ВС" → 7
+const mapDayToNumber = (day: string): number => {
+  const map: Record<string, number> = {
+    "ПН": 1, "ВТ": 2, "СР": 3, "ЧТ": 4, "ПТ": 5, "СБ": 6, "ВС": 7
+  };
+  return map[day] ?? 1;
+};
+
+// 🔁 Формат времени: "08:00" → "08:00:00"
+const formatTimeForServer = (timeStr: string): string => {
+  if (timeStr.length === 5 && timeStr[2] === ":") {
+    return `${timeStr}:00`;
+  }
+  return timeStr;
+};
+
+// ✅ Автоформатирование даты: "20112025" → "20.11.2025"
+const formatDateString = (value: string): string => {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)}`;
+};
+
+// ✅ Валидация даты
+const validateDate = (dateStr: string): boolean => {
+  if (!dateStr) return true;
+  const regex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
+  const match = dateStr.match(regex);
+  if (!match) return false;
+
+  const [, dd, mm, yyyy] = match;
+  const day = parseInt(dd, 10);
+  const month = parseInt(mm, 10);
+  const year = parseInt(yyyy, 10);
+
+  return (
+    day >= 1 && day <= 31 &&
+    month >= 1 && month <= 12 &&
+    year >= 1900 && year <= 2100
+  );
+};
+
 export default function Add() {
-  const { addMedication } = useDatabase();
+  const { addMedication, updateMedicationServerId } = useDatabase();
   const navigation = useNavigation();
 
   const [name, setName] = useState("");
   const [form, setForm] = useState<Medication["form"]>("tablet");
   const [startDate, setStartDate] = useState("");
-  const [scheduleType, setScheduleType] =
-    useState<Medication["schedule_type"]>("daily");
+  const [endDate, setEndDate] = useState(""); // ✅ Дата окончания
+  const [scheduleType, setScheduleType] = useState<Medication["schedule_type"]>("daily");
   const [timesList, setTimesList] = useState("");
   const [instructions, setInstructions] = useState("");
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
-  const [intervalDays, setIntervalDays] = useState<string>(""); // ✅ Новое поле
+  const [intervalDays, setIntervalDays] = useState("");
 
-  // ✅ Состояния для ошибок
-  const [nameError, setNameError] = useState("");
-  const [formError, setFormError] = useState("");
-  const [startDateError, setStartDateError] = useState("");
-  const [scheduleTypeError, setScheduleTypeError] = useState("");
-  const [timesListError, setTimesListError] = useState("");
-  const [intervalDaysError, setIntervalDaysError] = useState("");
-  const [selectedDaysError, setSelectedDaysError] = useState("");
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const toggleDay = (day: string) => {
-    setSelectedDays((prev) =>
-      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
-    );
-  };
+  const startDateRef = useRef<TextInput>(null);
+  const endDateRef = useRef<TextInput>(null);
 
-  // ✅ Валидация времени HH:MM
-  const validateTime = (time: string): boolean => {
-    if (!time) return false;
-    const regex = /^([01]\d|2[0-3]):([0-5]\d)$/;
-    return regex.test(time.trim());
-  };
+  const validate = () => {
+    const err: Record<string, string> = {};
 
-  // ✅ Валидация даты ДД.ММ.ГГГГ (без строгой проверки существования)
-  const validateDate = (dateStr: string): boolean => {
-    if (!dateStr) return false;
-    const regex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
-    if (!regex.test(dateStr)) return false;
+    if (!name.trim()) err.name = "Обязательно";
+    if (!startDate) err.startDate = "Обязательно";
+    if (startDate && !validateDate(startDate)) err.startDate = "Формат: ДД.ММ.ГГГГ";
+    if (endDate && !validateDate(endDate)) err.endDate = "Формат: ДД.ММ.ГГГГ";
 
-    const parts = dateStr.split('.');
-    if (parts.length !== 3) return false;
-
-    const [day, month, year] = parts.map(Number);
-    if (isNaN(day) || isNaN(month) || isNaN(year)) return false;
-
-    // Проверяем, что день и месяц в допустимых пределах
-    if (day < 1 || day > 31) return false;
-    if (month < 1 || month > 12) return false;
-    if (year < 1900 || year > 2100) return false;
-
-    return true;
-  };
-
-  // ✅ Валидация интервала (число от 1 до 30)
-  const validateInterval = (str: string): boolean => {
-    if (!str) return false;
-    const num = parseInt(str, 10);
-    return !isNaN(num) && num >= 1 && num <= 30;
-  };
-
-  // ✅ Сброс ошибок
-  const resetErrors = () => {
-    setNameError("");
-    setFormError("");
-    setStartDateError("");
-    setScheduleTypeError("");
-    setTimesListError("");
-    setIntervalDaysError("");
-    setSelectedDaysError("");
-  };
-
-  const handleAdd = async () => {
-    resetErrors();
-    let hasErrors = false;
-
-    if (!name) {
-      setNameError("Поле обязательно");
-      hasErrors = true;
-    }
-
-    if (!form) {
-      setFormError("Поле обязательно");
-      hasErrors = true;
-    }
-
-    if (!startDate) {
-      setStartDateError("Поле обязательно");
-      hasErrors = true;
-    } else if (!validateDate(startDate)) {
-      setStartDateError("Формат: ДД.ММ.ГГГГ, например 13.11.2025");
-      hasErrors = true;
-    }
-
-    if (!scheduleType) {
-      setScheduleTypeError("Поле обязательно");
-      hasErrors = true;
-    }
-
-    if (!timesList) {
-      setTimesListError("Поле обязательно");
-      hasErrors = true;
-    } else {
-      const times = timesList.split(",").map(t => t.trim());
-      for (const time of times) {
-        if (!validateTime(time)) {
-          setTimesListError(`Неверный формат времени: ${time}. Используйте ЧЧ:ММ`);
-          hasErrors = true;
-          break;
-        }
+    const times = timesList.split(",").map(t => t.trim());
+    for (const t of times) {
+      if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(t)) {
+        err.times = `Неверное время: ${t}`;
+        break;
       }
     }
 
     if (scheduleType === "every_x_days") {
-      if (!intervalDays) {
-        setIntervalDaysError("Поле обязательно");
-        hasErrors = true;
-      } else if (!validateInterval(intervalDays)) {
-        setIntervalDaysError("Введите число от 1 до 30");
-        hasErrors = true;
+      const num = parseInt(intervalDays);
+      if (!intervalDays || isNaN(num) || num < 1 || num > 30) {
+        err.interval = "1–30 дней";
       }
     }
 
     if (scheduleType === "weekly_days" && selectedDays.length === 0) {
-      setSelectedDaysError("Выберите хотя бы один день");
-      hasErrors = true;
+      err.weekly = "Выберите дни";
     }
 
-    if (hasErrors) return;
+    setErrors(err);
+    return Object.keys(err).length === 0;
+  };
 
-    // Конвертируем дату в YYYY-MM-DD
-    const [day, month, year] = startDate.split('.').map(Number);
-    const convertedDate = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+  const handleAdd = useCallback(async () => {
+    if (!validate()) return;
+
+    // Конвертация дат
+    const convertDate = (dateStr: string): string | null => {
+      if (!dateStr) return null;
+      const [dd, mm, yyyy] = dateStr.split(".").map(Number);
+      return `${yyyy}-${mm.toString().padStart(2, "0")}-${dd.toString().padStart(2, "0")}`;
+    };
+
+    const isoStartDate = convertDate(startDate)!;
+    const isoEndDate = convertDate(endDate);
+
+    const med: Medication = {
+      name,
+      form,
+      instructions: instructions || null,
+      start_date: isoStartDate,
+      end_date: isoEndDate,
+      schedule_type: scheduleType,
+      weekly_days: scheduleType === "weekly_days" ? selectedDays : null,
+      interval_days: scheduleType === "every_x_days" ? parseInt(intervalDays) : null,
+      times_list: timesList.split(",").map(t => t.trim()),
+    };
 
     try {
-      const med: Medication = {
-        name,
-        form,
-        instructions: instructions || null,
-        start_date: convertedDate,
-        end_date: null,
-        schedule_type: scheduleType,
-        weekly_days: scheduleType === "weekly_days" ? selectedDays : null,
-        interval_days: scheduleType === "every_x_days" ? parseInt(intervalDays, 10) : null,
-        times_list: timesList.split(",").map((t) => t.trim()),
-      };
+      // 1️⃣ Сохраняем локально
+      const localId = await addMedication(med);
+      console.log("✅ Лекарство сохранено локально, id:", localId);
 
-      await addMedication(med);
-
-      // ✅ Планируем уведомления сразу после добавления
+      // 2️⃣ Планируем уведомления
       for (const time of med.times_list) {
         await scheduleMedicationNotification(
           med.name,
@@ -317,33 +236,64 @@ export default function Add() {
         );
       }
 
-      alert("✅ Медикамент добавлен и уведомления запланированы!");
+      // 3️⃣ Отправляем на сервер
+      try {
+        const user = await getLocalUser();
+        if (!user) throw new Error("Пользователь не авторизован");
+
+        const serverPayload = {
+          name: med.name,
+          form: med.form,
+          instructions: med.instructions,
+          start_date: med.start_date,
+          end_date: med.end_date,
+          schedule_type: med.schedule_type,
+          week_days: med.schedule_type === "weekly_days"
+            ? selectedDays.map(mapDayToNumber)
+            : undefined,
+          interval_days: med.schedule_type === "every_x_days"
+            ? med.interval_days
+            : undefined,
+          times_per_day: med.times_list.map(formatTimeForServer),
+        };
+
+        const serverResponse = await apiClient.postWithAuth(
+          "/medicines/add_medication",
+          serverPayload
+        );
+
+        if (serverResponse.id) {
+          await updateMedicationServerId(localId, serverResponse.id);
+        }
+
+        Alert.alert("✅ Успех", "Лекарство добавлено и синхронизировано!");
+      } catch (syncError: any) {
+        console.warn("⚠️ Синхронизация отложена:", syncError.message);
+        Alert.alert(
+          "✅ Сохранено",
+          "Лекарство добавлено локально. Синхронизация выполнится при подключении к сети.",
+          [{ text: "Ок" }]
+        );
+      }
+
       navigation.goBack();
-    } catch (e) {
-      console.error("Ошибка при добавлении медикамента:", e);
-      alert("Ошибка при сохранении медикамента");
+    } catch (e: any) {
+      console.error("❌ Ошибка добавления:", e);
+      Alert.alert("Ошибка", e.message || "Не удалось добавить лекарство");
     }
-  };
+  }, [
+    name, form, startDate, endDate, scheduleType, timesList,
+    instructions, selectedDays, intervalDays,
+    addMedication, updateMedicationServerId, navigation
+  ]);
 
-  // Для формы
+  // UI — меню
   const [formVisible, setFormVisible] = useState(false);
-  const formItems = [
-    { label: "Таблетка", value: "tablet" },
-    { label: "Капли", value: "drop" },
-    { label: "Спрей", value: "spray" },
-  ];
-
-  // Для типа расписания
   const [scheduleVisible, setScheduleVisible] = useState(false);
-  const scheduleItems = [
-    { label: "Ежедневно", value: "daily" },
-    { label: "По дням недели", value: "weekly_days" },
-    { label: "Каждые X дней", value: "every_x_days" },
-  ];
 
   return (
-    <Screen style={{ flex: 1, backgroundColor: "#121212", padding: 20 }}>
-      <Text variant="titleLarge" style={{ marginBottom: 10, color: "white" }}>
+    <Screen style={{ flex: 1, padding: 20 }}>
+      <Text variant="titleLarge" style={{ marginBottom: 16 }}>
         Добавить медикамент
       </Text>
 
@@ -352,39 +302,32 @@ export default function Add() {
         value={name}
         onChangeText={setName}
         mode="outlined"
-        style={{ marginBottom: 8, backgroundColor: "#121212" }}
-        textColor="white"
-        outlineColor="#444"
-        activeOutlineColor="#4A3AFF"
-        error={!!nameError}
+        error={!!errors.name}
+        style={{ marginBottom: 12 }}
       />
-      {nameError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{nameError}</Text> : null}
+      {errors.name && <HelperText type="error">{errors.name}</HelperText>}
 
-      {/* Выбор формы */}
+      {/* Форма */}
       <Menu
-        key={`form-menu-${formVisible}`}
         visible={formVisible}
         onDismiss={() => setFormVisible(false)}
         anchor={
           <TextInput
             label="Форма"
-            value={
-              form === "tablet" ? "Таблетка" :
-              form === "drop" ? "Капли" :
-              form === "spray" ? "Спрей" : "Другое"
-            }
+            value={form === "tablet" ? "Таблетка" : form === "drop" ? "Капли" : "Спрей"}
             mode="outlined"
-            style={{ marginBottom: 8, backgroundColor: "#121212" }}
-            textColor="white"
-            outlineColor="#444"
-            activeOutlineColor="#4A3AFF"
             editable={false}
             onPress={() => setFormVisible(true)}
-            error={!!formError}
+            error={!!errors.form}
+            style={{ marginBottom: 12 }}
           />
         }
       >
-        {formItems.map((item) => (
+        {[
+          { label: "Таблетка", value: "tablet" },
+          { label: "Капли", value: "drop" },
+          { label: "Спрей", value: "spray" },
+        ].map(item => (
           <Menu.Item
             key={item.value}
             title={item.label}
@@ -395,46 +338,60 @@ export default function Add() {
           />
         ))}
       </Menu>
-      {formError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{formError}</Text> : null}
 
+      {/* Дата начала */}
       <TextInput
+        ref={startDateRef}
         label="Дата начала (ДД.ММ.ГГГГ)"
         value={startDate}
-        onChangeText={setStartDate}
+        onChangeText={(text) => setStartDate(formatDateString(text))}
+        keyboardType="numeric"
+        maxLength={10}
         mode="outlined"
-        style={{ marginBottom: 8, backgroundColor: "#121212" }}
-        textColor="white"
-        outlineColor="#444"
-        activeOutlineColor="#4A3AFF"
-        error={!!startDateError}
+        error={!!errors.startDate}
+        style={{ marginBottom: 12 }}
+        onSubmitEditing={() => endDateRef.current?.focus()}
       />
-      {startDateError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{startDateError}</Text> : null}
+      {errors.startDate && <HelperText type="error">{errors.startDate}</HelperText>}
 
-      {/* Выбор типа расписания */}
+      {/* Дата окончания */}
+      <TextInput
+        ref={endDateRef}
+        label="Дата окончания (необязательно)"
+        value={endDate}
+        onChangeText={(text) => setEndDate(formatDateString(text))}
+        keyboardType="numeric"
+        maxLength={10}
+        mode="outlined"
+        error={!!errors.endDate}
+        style={{ marginBottom: 12 }}
+      />
+      {errors.endDate && <HelperText type="error">{errors.endDate}</HelperText>}
+
+      {/* Расписание */}
       <Menu
-        key={`schedule-menu-${scheduleVisible}`}
         visible={scheduleVisible}
         onDismiss={() => setScheduleVisible(false)}
         anchor={
           <TextInput
-            label="Тип расписания"
+            label="Расписание"
             value={
               scheduleType === "daily" ? "Ежедневно" :
-              scheduleType === "weekly_days" ? "По дням недели" :
-              "Каждые X дней"
+              scheduleType === "weekly_days" ? "По дням недели" : "Каждые X дней"
             }
             mode="outlined"
-            style={{ marginBottom: 8, backgroundColor: "#121212" }}
-            textColor="white"
-            outlineColor="#444"
-            activeOutlineColor="#4A3AFF"
             editable={false}
             onPress={() => setScheduleVisible(true)}
-            error={!!scheduleTypeError}
+            error={!!errors.schedule}
+            style={{ marginBottom: 12 }}
           />
         }
       >
-        {scheduleItems.map((item) => (
+        {[
+          { label: "Ежедневно", value: "daily" },
+          { label: "По дням недели", value: "weekly_days" },
+          { label: "Каждые X дней", value: "every_x_days" },
+        ].map(item => (
           <Menu.Item
             key={item.value}
             title={item.label}
@@ -445,57 +402,45 @@ export default function Add() {
           />
         ))}
       </Menu>
-      {scheduleTypeError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{scheduleTypeError}</Text> : null}
 
-      {/* Поле для интервала, если выбран "Каждые X дней" */}
       {scheduleType === "every_x_days" && (
         <>
           <TextInput
-            label="Каждые X дней"
+            label="Интервал (дней)"
             value={intervalDays}
             onChangeText={setIntervalDays}
-            mode="outlined"
             keyboardType="numeric"
-            style={{ marginBottom: 8, backgroundColor: "#121212" }}
-            textColor="white"
-            outlineColor="#444"
-            activeOutlineColor="#4A3AFF"
-            error={!!intervalDaysError}
+            mode="outlined"
+            error={!!errors.interval}
+            style={{ marginBottom: 12 }}
           />
-          {intervalDaysError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{intervalDaysError}</Text> : null}
+          {errors.interval && <HelperText type="error">{errors.interval}</HelperText>}
         </>
       )}
 
       {scheduleType === "weekly_days" && (
-        <>
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              marginBottom: 12,
-            }}
-          >
-            {daysOfWeek.map((day) => (
-              <TouchableOpacity key={day} onPress={() => toggleDay(day)}>
-                <View
-                  style={{
-                    backgroundColor: selectedDays.includes(day)
-                      ? "#4A3AFF"
-                      : "#1E1E1E",
-                    borderRadius: 25,
-                    width: 36,
-                    height: 36,
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}
-                >
-                  <Text style={{ color: "white" }}>{day}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-          {selectedDaysError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{selectedDaysError}</Text> : null}
-        </>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 16 }}>
+          {daysOfWeek.map(day => (
+            <TouchableOpacity
+              key={day}
+              onPress={() => setSelectedDays(prev =>
+                prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+              )}
+            >
+              <View style={{
+                width: 40, height: 40,
+                borderRadius: 20,
+                backgroundColor: selectedDays.includes(day) ? "#4A3AFF" : "#E0E0E0",
+                justifyContent: "center",
+                alignItems: "center",
+              }}>
+                <Text style={{ color: selectedDays.includes(day) ? "white" : "black" }}>
+                  {day}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
       )}
 
       <TextInput
@@ -503,29 +448,24 @@ export default function Add() {
         value={timesList}
         onChangeText={setTimesList}
         mode="outlined"
-        style={{ marginBottom: 8, backgroundColor: "#121212" }}
-        textColor="white"
-        outlineColor="#444"
-        activeOutlineColor="#4A3AFF"
-        error={!!timesListError}
+        error={!!errors.times}
+        style={{ marginBottom: 16 }}
       />
-      {timesListError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{timesListError}</Text> : null}
+      {errors.times && <HelperText type="error">{errors.times}</HelperText>}
 
       <TextInput
-        label="Инструкции (по желанию)"
+        label="Инструкции"
         value={instructions}
         onChangeText={setInstructions}
         mode="outlined"
         multiline
-        style={{ marginBottom: 16, backgroundColor: "#121212" }}
-        textColor="white"
-        outlineColor="#444"
-        activeOutlineColor="#4A3AFF"
+        style={{ marginBottom: 24 }}
       />
 
       <Button
         mode="contained"
         onPress={handleAdd}
+        disabled={Object.keys(errors).length > 0}
         style={{ backgroundColor: "#4A3AFF" }}
       >
         Добавить

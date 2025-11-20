@@ -1,114 +1,152 @@
 // app/modals/take-medication-modal.tsx
-
 import React, { useEffect, useState } from 'react';
 import { View, Text, Alert, TouchableOpacity } from 'react-native';
 import { Card, Button, Portal, Modal, Provider, Surface, Icon } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useDatabase } from '@/hooks/use-database';
+import apiClient from '@/services/api';
 
 export default function TakeMedicationModal() {
-  const { medicationId, plannedTime } = useLocalSearchParams();
+  const { medicationId, plannedTime } = useLocalSearchParams<{ medicationId: string; plannedTime: string }>();
   const router = useRouter();
-  const { getMedications, addIntake, deleteMedication, deleteFutureIntakes } = useDatabase(); // ✅ Добавили deleteFutureIntakes
+  const { getMedications, addIntake, deleteMedication, deleteFutureIntakes } = useDatabase();
 
   const [medication, setMedication] = useState<any>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [actionStatus, setActionStatus] = useState<{ type: 'taken' | 'skipped'; time: string } | null>(null);
 
   useEffect(() => {
     const loadMed = async () => {
       try {
-        console.log('Загрузка лекарства...');
-        console.log('medicationId из параметров:', medicationId);
-
+        if (!medicationId) return;
+        
         const meds = await getMedications();
-        console.log('Все лекарства из БД:', meds);
-
         const found = meds.find(m => m.id === Number(medicationId));
-        console.log('Найденное лекарство:', found);
-
-        if (found) {
-          setMedication(found);
-        } else {
-          console.log('Лекарство не найдено по id:', Number(medicationId));
+        
+        if (!found) {
+          console.warn('Лекарство не найдено по id:', medicationId);
+          Alert.alert('Ошибка', 'Лекарство не найдено');
+          router.back();
+          return;
         }
+        
+        console.log('💊 Загружено лекарство:', {
+          id: found.id,
+          server_id: found.server_id,
+          name: found.name,
+        });
+        
+        setMedication(found);
       } catch (error) {
         console.error('Ошибка загрузки лекарства:', error);
+        Alert.alert('Ошибка', 'Не удалось загрузить лекарство');
+        router.back();
       }
     };
+
     loadMed();
-  }, [medicationId, getMedications]);
+  }, [medicationId, router]);
 
-  const handleMarkAsTaken = async () => {
-    try {
-      await addIntake({
-        medication_id: Number(medicationId),
-        planned_time: plannedTime as string,
-        datetime: new Date().toISOString(),
-        taken: true,
-        skipped: false,
-      });
-      router.back();
-    } catch (error) {
-      console.error('Ошибка при отметке приёма:', error);
-    }
-  };
-
-  const handleMarkAsSkipped = async () => {
-    try {
-      await addIntake({
-        medication_id: Number(medicationId),
-        planned_time: plannedTime as string,
-        datetime: new Date().toISOString(),
-        taken: false,
-        skipped: true,
-      });
-      router.back();
-    } catch (error) {
-      console.error('Ошибка при отметке пропуска:', error);
-    }
-  };
-
-  const handleCancel = () => {
-    router.back();
-  };
-
-  const handleDelete = async () => {
-    console.log('handleDelete вызван!');
-    console.log('medicationId:', medicationId);
-    console.log('typeof medicationId:', typeof medicationId);
-    console.log('Number(medicationId):', Number(medicationId));
-    console.log('medication:', medication);
-
+  const handleIntakeAction = async (taken: boolean) => {
     if (!medication) {
-      console.log('medication не загружен — невозможно удалить');
-      Alert.alert('Ошибка', 'Не удалось загрузить информацию о лекарстве');
+      Alert.alert('Ошибка', 'Лекарство не загружено');
       return;
     }
 
-    const medicationName = medication?.name || 'лекарство';
+    setIsSyncing(true);
 
-    console.log('Открываем Alert для удаления:', medicationName);
+    try {
+      const now = new Date();
+      const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      const localIntakeData = {
+        medication_id: medication.id,
+        planned_time: plannedTime,
+        datetime: now.toISOString(),
+        taken,
+        skipped: !taken,
+      };
+
+      const serverIntakeData = {
+        medication_id: medication.server_id,
+        planned_time: plannedTime,
+        datetime: now.toISOString(),
+        taken,
+        skipped: !taken,
+      };
+
+      // 1️⃣ Сохраняем локально
+      const localId = await addIntake(localIntakeData);
+      console.log('✅ Запись сохранена локально, id:', localId);
+
+      // 2️⃣ Устанавливаем статус действия
+      setActionStatus({ 
+        type: taken ? 'taken' : 'skipped', 
+        time: formattedTime 
+      });
+
+      // 3️⃣ Синхронизируем
+      if (medication.server_id != null) {
+        try {
+          console.log('📤 Синхронизация с server_id:', medication.server_id);
+          await apiClient.intakeSync(serverIntakeData);
+          console.log('✅ Синхронизация успешна');
+        } catch (syncError: any) {
+          console.warn('⚠️ Синхронизация отложена:', syncError.message);
+          Alert.alert(
+            'Синхронизация отложена',
+            'Данные сохранены на устройстве.',
+            [{ text: 'OK' }]
+          );
+        }
+      } else {
+        console.warn('⏭️ Лекарство не синхронизировано (server_id = null)');
+        Alert.alert(
+          'Синхронизация отложена',
+          `Лекарство "${medication.name}" ещё не сохранено на сервере.`,
+          [{ text: 'OK' }]
+        );
+      }
+
+      // ✅ Закрываем модалку через 1.2 секунды
+      setTimeout(() => {
+        router.back();
+      }, 1200);
+
+    } catch (error: any) {
+      console.error('❌ Ошибка сохранения:', error);
+      setActionStatus(null);
+      Alert.alert('Ошибка', error.message || 'Не удалось сохранить приём');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleMarkAsTaken = () => handleIntakeAction(true);
+  const handleMarkAsSkipped = () => handleIntakeAction(false);
+  const handleCancel = () => router.back();
+
+  const handleDelete = async () => {
+    if (!medication) {
+      Alert.alert('Ошибка', 'Лекарство не загружено');
+      return;
+    }
 
     Alert.alert(
       'Удалить лекарство?',
-      `Вы уверены, что хотите удалить "${medicationName}"?`,
+      `Вы уверены, что хотите удалить "${medication.name}"?`,
       [
         { text: 'Отмена', style: 'cancel' },
         {
           text: 'Удалить',
           style: 'destructive',
           onPress: async () => {
-            console.log('Подтверждение удаления получено');
             try {
-              console.log('Удаляем будущие приёмы...');
-              await deleteFutureIntakes(Number(medicationId));
-
-              console.log('Удаляем лекарство...');
-              await deleteMedication(Number(medicationId));
-
-              console.log('Лекарство и будущие приёмы удалены, закрываем модальное окно');
+              await deleteFutureIntakes(medication.id);
+              await deleteMedication(medication.id);
               router.back();
             } catch (error) {
-              console.error('Ошибка при удалении лекарства:', error);
+              console.error('Ошибка удаления:', error);
               Alert.alert('Ошибка', 'Не удалось удалить лекарство');
             }
           },
@@ -124,7 +162,9 @@ export default function TakeMedicationModal() {
           <Modal visible={true} onDismiss={handleCancel}>
             <Card style={{ margin: 20, backgroundColor: '#1E1E1E' }}>
               <Card.Content>
-                <Text style={{ color: 'white', textAlign: 'center' }}>Загрузка...</Text>
+                <Text style={{ color: 'white', textAlign: 'center' }}>
+                  {isSyncing ? 'Синхронизация...' : 'Загрузка...'}
+                </Text>
               </Card.Content>
             </Card>
           </Modal>
@@ -132,6 +172,22 @@ export default function TakeMedicationModal() {
       </Provider>
     );
   }
+
+  // Форматируем plannedTime для отображения
+  const displayTime = (() => {
+    try {
+      if (/^\d{1,2}:\d{2}/.test(plannedTime)) {
+        return plannedTime;
+      }
+      const d = new Date(plannedTime);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+      return plannedTime;
+    } catch {
+      return plannedTime;
+    }
+  })();
 
   return (
     <Provider>
@@ -144,42 +200,83 @@ export default function TakeMedicationModal() {
             padding: 16,
             elevation: 4,
           }}>
-            {/* Header */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ color: 'white', fontSize: 18, fontWeight: '600' }}>{medication.name}</Text>
-              <TouchableOpacity onPress={handleDelete} activeOpacity={0.6}>
-                <Icon source="delete" size={40} color="#ff6b6b" />
+            {/* Header with pill icon and time */}
+            <View style={{ 
+              flexDirection: 'row', 
+              justifyContent: 'space-between', 
+              alignItems: 'flex-start', // для многострочного текста
+              marginBottom: 16 
+            }}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Icon source="pill" size={26} color="#64B5F6" />
+                  <Text style={{ 
+                    color: 'white', 
+                    fontSize: 18, 
+                    fontWeight: '600',
+                    flex: 1,
+                  }}>
+                    {medication.name}
+                  </Text>
+                </View>
+                
+                {/* Time row: clock icon + scheduled time */}
+                <View style={{ 
+                  flexDirection: 'row', 
+                  alignItems: 'center', 
+                  marginTop: 6, 
+                  gap: 6 
+                }}>
+                  <Icon source="clock-outline" size={16} color="#888" />
+                  <Text style={{ color: '#aaa', fontSize: 14 }}>
+                    Запланировано на {displayTime}, сегодня
+                  </Text>
+                </View>
+              </View>
+              
+              <TouchableOpacity 
+                onPress={handleDelete} 
+                activeOpacity={0.6} 
+                disabled={isSyncing}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Icon 
+                  source="delete" 
+                  size={40} 
+                  color={isSyncing ? '#666' : '#ff6b6b'} 
+                />
               </TouchableOpacity>
             </View>
 
             {/* Content */}
-            <View style={{ marginBottom: 20 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <Icon source="calendar-clock" size={16} color="#aaa" style={{ marginRight: 8 }} />
-                <Text style={{ color: '#ccc', fontSize: 14 }}>
-                  Запланировано на {plannedTime}, сегодня
-                </Text>
-              </View>
-
-              {medication.instructions && (
-                <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: 8 }}>
-                  <Icon source="notebook" size={16} color="#aaa" style={{ marginRight: 8, marginTop: 4 }} />
+            {medication.instructions && (
+              <View style={{ marginBottom: 20 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                  <Icon source="notebook-outline" size={18} color="#aaa" style={{ marginTop: 4 }} />
                   <Text style={{ color: '#ccc', fontSize: 14, flex: 1 }}>
                     {medication.instructions}
                   </Text>
                 </View>
-              )}
-            </View>
+              </View>
+            )}
 
             {/* Footer Buttons */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingTop: 16, borderTopWidth: 1, borderTopColor: '#333' }}>
+            <View style={{ 
+              flexDirection: 'row', 
+              justifyContent: 'space-around', 
+              paddingTop: 16, 
+              borderTopWidth: 1, 
+              borderTopColor: '#333' 
+            }}>
               <Button
                 mode="contained"
                 onPress={handleMarkAsSkipped}
                 buttonColor="#FF3B30"
                 textColor="white"
-                style={{ width: 80, height: 50, justifyContent: 'center' }}
+                style={{ width: 80, height: 50 }}
                 contentStyle={{ paddingVertical: 0 }}
+                disabled={isSyncing}
+                loading={isSyncing}
               >
                 <Icon source="close" size={20} color="white" />
               </Button>
@@ -189,8 +286,10 @@ export default function TakeMedicationModal() {
                 onPress={handleMarkAsTaken}
                 buttonColor="#34C759"
                 textColor="white"
-                style={{ width: 80, height: 50, justifyContent: 'center' }}
+                style={{ width: 80, height: 50 }}
                 contentStyle={{ paddingVertical: 0 }}
+                disabled={isSyncing}
+                loading={isSyncing}
               >
                 <Icon source="check" size={20} color="white" />
               </Button>
@@ -200,19 +299,54 @@ export default function TakeMedicationModal() {
                 onPress={handleCancel}
                 buttonColor="#4A3AFF"
                 textColor="white"
-                style={{ width: 80, height: 50, justifyContent: 'center' }}
+                style={{ width: 80, height: 50 }}
                 contentStyle={{ paddingVertical: 0 }}
+                disabled={isSyncing}
               >
                 <Icon source="clock" size={20} color="white" />
               </Button>
             </View>
 
-            {/* Labels under buttons */}
-            <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginTop: 4 }}>
-              <Text style={{ color: '#4A3AFF', fontSize: 12 }}>Пропустить</Text>
-              <Text style={{ color: '#34C759', fontSize: 12 }}>Принять</Text>
-              <Text style={{ color: '#4A3AFF', fontSize: 12 }}>Перенести</Text>
+            {/* Labels */}
+            <View style={{ 
+              flexDirection: 'row', 
+              justifyContent: 'space-around', 
+              marginTop: 6 
+            }}>
+              <Text style={{ color: isSyncing ? '#666' : '#FF3B30', fontSize: 12 }}>Пропустить</Text>
+              <Text style={{ color: isSyncing ? '#666' : '#34C759', fontSize: 12 }}>Принять</Text>
+              <Text style={{ color: isSyncing ? '#666' : '#4A3AFF', fontSize: 12 }}>Перенести</Text>
             </View>
+
+            {/* ✅ Action confirmation */}
+            {actionStatus && (
+              <View style={{ 
+                marginTop: 16, 
+                padding: 14,
+                backgroundColor: actionStatus.type === 'taken' ? '#252D25' : '#2D2525',
+                borderRadius: 10,
+                alignItems: 'center',
+                borderWidth: 1,
+                borderColor: actionStatus.type === 'taken' ? '#2E7D32' : '#C62828',
+              }}>
+                <Icon 
+                  source={actionStatus.type === 'taken' ? 'check-circle' : 'close-circle'} 
+                  size={32} 
+                  color={actionStatus.type === 'taken' ? '#4CAF50' : '#EF5350'} 
+                />
+                <Text style={{ 
+                  color: 'white', 
+                  fontSize: 16,
+                  marginTop: 8,
+                  fontWeight: '600',
+                  textAlign: 'center',
+                }}>
+                  {actionStatus.type === 'taken' 
+                    ? `✅ Принято в ${actionStatus.time}` 
+                    : `❌ Пропущено в ${actionStatus.time}`}
+                </Text>
+              </View>
+            )}
           </Surface>
         </Modal>
       </Portal>
