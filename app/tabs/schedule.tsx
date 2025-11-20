@@ -80,7 +80,7 @@ export default function Schedule() {
       if (match) {
         const [_, formattedDate, formattedTime] = match;
         return { 
-          status: `Перенесено на ${formattedDate} ${formattedTime}`, 
+          status: `Перенесено на ${formattedDate}`, 
           time: null, // Don't show time again since it's already in the status
           color: '#4A3AFF',
           isRescheduled: true
@@ -154,18 +154,19 @@ export default function Schedule() {
     }
 
     // Проверяем расписание
+    let shouldShowBySchedule = false;
     if (med.schedule_type === 'daily') {
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
       const startStr = start.toISOString().split('T')[0];
-      return startStr <= todayStr;
+      shouldShowBySchedule = startStr <= todayStr;
     }
 
     if (med.schedule_type === 'weekly_days' && med.weekly_days) {
       try {
         const daysList = typeof med.weekly_days === 'string' ? JSON.parse(med.weekly_days) : med.weekly_days;
         if (Array.isArray(daysList)) {
-          return daysList.includes(day);
+          shouldShowBySchedule = daysList.includes(day);
         }
       } catch {
         return false;
@@ -177,21 +178,42 @@ export default function Schedule() {
       const diffMs = targetDate.getTime() - start.getTime();
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       if (diffDays < 0) return false;
-      return diffDays % med.interval_days === 0;
+      shouldShowBySchedule = diffDays % med.interval_days === 0;
+    }
+
+    // If medication would normally appear by schedule, check if it was rescheduled away
+    if (shouldShowBySchedule) {
+      // Check if there's a "перенесен на" record for this medication 
+      // where the planned_time matches what would be scheduled on this date
+      // We need to determine what times are normally scheduled on this date
+      const times = typeof med.times_list === 'string' ? med.times_list : Array.isArray(med.times_list) ? med.times_list.join(', ') : '';
+      const scheduledTimes = times.split(',').map(t => t.trim()).filter(t => t.length > 0);
+      
+      // Check if any of the scheduled times for this medication have been rescheduled away
+      const rescheduledAway = intakeHistory.some(intake => 
+        intake.medication_id === med.id && 
+        intake.notes && 
+        intake.notes.includes('перенесен на') &&
+        scheduledTimes.includes(intake.planned_time)  // Check if the planned time matches
+      );
+      
+      if (rescheduledAway) {
+        return false; // Don't show if it was rescheduled away from this date
+      }
     }
 
     // Дополнительно проверяем, не было ли переноса на этот день
-    const selectedDateStr = selectedDate.toISOString().split('T')[0];
     if (intakeHistory.some(intake => 
       intake.medication_id === med.id && 
       intake.notes && 
       intake.notes.includes('перенос из') &&
-      intake.notes.includes(selectedDateStr)
+      intake.notes.includes(selectedDayStr)
     )) {
       return true;
     }
 
-    return false;
+    // Return whether it should show by original schedule and wasn't rescheduled away
+    return shouldShowBySchedule;
   };
 
   const filteredMeds = useMemo(() => {
