@@ -9,27 +9,26 @@ export default function TakeMedicationModal() {
   const router = useRouter();
   const { getMedications, addIntake, deleteMedication, deleteFutureIntakes } = useDatabase();
   const [medication, setMedication] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   
   useEffect(() => {
     const loadMed = async () => {
       try {
-        console.log('Загрузка лекарства...');
-        console.log('medicationId из параметров:', medicationId);
+        setLoading(true);
         const meds = await getMedications();
-        console.log('Все лекарства из БД:', meds);
         const found = meds.find(m => m.id === Number(medicationId));
-        console.log('Найденное лекарство:', found);
         if (found) {
           setMedication(found);
-        } else {
-          console.log('Лекарство не найдено по id:', Number(medicationId));
         }
       } catch (error) {
         console.error('Ошибка загрузки лекарства:', error);
+        Alert.alert('Ошибка', 'Не удалось загрузить информацию о лекарстве');
+      } finally {
+        setLoading(false);
       }
     };
     loadMed();
-  }, [medicationId, getMedications]);
+  }, [medicationId]);
 
   const handleMarkAsTaken = async () => {
     try {
@@ -43,6 +42,7 @@ export default function TakeMedicationModal() {
       router.back();
     } catch (error) {
       console.error('Ошибка при отметке приёма:', error);
+      Alert.alert('Ошибка', 'Не удалось отметить приём');
     }
   };
 
@@ -58,6 +58,7 @@ export default function TakeMedicationModal() {
       router.back();
     } catch (error) {
       console.error('Ошибка при отметке пропуска:', error);
+      Alert.alert('Ошибка', 'Не удалось отметить пропуск');
     }
   };
 
@@ -70,18 +71,12 @@ export default function TakeMedicationModal() {
   };
 
   const handleDelete = async () => {
-    console.log('handleDelete вызван!');
-    console.log('medicationId:', medicationId);
-    console.log('typeof medicationId:', typeof medicationId);
-    console.log('Number(medicationId):', Number(medicationId));
-    console.log('medication:', medication);
     if (!medication) {
-      console.log('medication не загружен — невозможно удалить');
       Alert.alert('Ошибка', 'Не удалось загрузить информацию о лекарстве');
       return;
     }
+    
     const medicationName = medication?.name || 'лекарство';
-    console.log('Открываем Alert для удаления:', medicationName);
     Alert.alert(
       'Удалить лекарство?',
       `Вы уверены, что хотите удалить "${medicationName}"?`,
@@ -91,13 +86,9 @@ export default function TakeMedicationModal() {
           text: 'Удалить',
           style: 'destructive',
           onPress: async () => {
-            console.log('Подтверждение удаления получено');
             try {
-              console.log('Удаляем будущие приёмы...');
               await deleteFutureIntakes(Number(medicationId));
-              console.log('Удаляем лекарство...');
               await deleteMedication(Number(medicationId));
-              console.log('Лекарство и будущие приёмы удалены, закрываем модальное окно');
               router.back();
             } catch (error) {
               console.error('Ошибка при удалении лекарства:', error);
@@ -109,7 +100,7 @@ export default function TakeMedicationModal() {
     );
   };
 
-  if (!medication) {
+  if (loading) {
     return (
       <Provider>
         <Portal>
@@ -117,6 +108,22 @@ export default function TakeMedicationModal() {
             <Card style={{ margin: 20, backgroundColor: '#1E1E1E' }}>
               <Card.Content>
                 <Text style={{ color: 'white', textAlign: 'center' }}>Загрузка...</Text>
+              </Card.Content>
+            </Card>
+          </Modal>
+        </Portal>
+      </Provider>
+    );
+  }
+
+  if (!medication) {
+    return (
+      <Provider>
+        <Portal>
+          <Modal visible={true} onDismiss={handleCancel}>
+            <Card style={{ margin: 20, backgroundColor: '#1E1E1E' }}>
+              <Card.Content>
+                <Text style={{ color: 'white', textAlign: 'center' }}>Ошибка загрузки</Text>
               </Card.Content>
             </Card>
           </Modal>

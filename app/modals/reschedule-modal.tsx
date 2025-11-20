@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Alert, TouchableOpacity, Keyboard, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, TextInput, Alert, TouchableOpacity, Keyboard } from 'react-native';
 import { Card, Button, Portal, Modal, Provider, Surface, Icon, Divider } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useDatabase } from '@/hooks/use-database';
@@ -16,12 +16,6 @@ export default function RescheduleModal() {
   const [error, setError] = useState('');
   const [medication, setMedication] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  
-  const dayInput = useRef<TextInput>(null);
-  const monthInput = useRef<TextInput>(null);
-  const yearInput = useRef<TextInput>(null);
-  const hoursInput = useRef<TextInput>(null);
-  const minutesInput = useRef<TextInput>(null);
 
   useEffect(() => {
     const loadMed = async () => {
@@ -46,9 +40,9 @@ export default function RescheduleModal() {
   useEffect(() => {
     if (!loading) {
       const today = new Date();
-      setDay(today.getDate().toString().padStart(2, '0'));
-      setMonth((today.getMonth() + 1).toString().padStart(2, '0'));
-      setYear(today.getFullYear().toString());
+      setDay(String(today.getDate()).padStart(2, '0'));
+      setMonth(String(today.getMonth() + 1).padStart(2, '0'));
+      setYear(String(today.getFullYear()));
     }
   }, [loading]);
 
@@ -128,9 +122,20 @@ export default function RescheduleModal() {
       // Форматируем дату и время
       const formattedDate = `${day.padStart(2, '0')}.${month.padStart(2, '0')}.${year}`;
       const formattedTime = `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`;
-      const formattedDateTime = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:00.000Z`;
       
-      // 1. Создаем запись о переносе оригинального приема
+      // Создаем дату и время без часового пояса
+      const targetDate = new Date(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        parseInt(hours),
+        parseInt(minutes)
+      );
+      
+      // Сохраняем в формате, который не будет конвертирован в другой часовой пояс
+      const formattedDateTime = targetDate.toISOString().slice(0, 19);
+      
+      // 1. Создаем запись о переносе в текущем времени
       await addIntake({
         medication_id: Number(medicationId),
         planned_time: plannedTime as string,
@@ -161,6 +166,38 @@ export default function RescheduleModal() {
       setError('Не удалось перенести прием');
     }
   };
+
+  const renderInputField = (
+    label: string,
+    value: string,
+    onChangeText: (text: string) => void,
+    keyboardType: "default" | "numeric" | "email-address" | "phone-pad" = 'numeric',
+    maxLength: number = 2,
+    placeholder?: string
+  ) => (
+    <View style={{ marginBottom: 12 }}>
+      <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>{label}</Text>
+      <TextInput
+        style={{
+          backgroundColor: '#2C2C2C',
+          color: 'white',
+          padding: 12,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: error ? '#FF3B30' : '#333',
+        }}
+        placeholder={placeholder || ''}
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType}
+        maxLength={maxLength}
+        placeholderTextColor="#666"
+        returnKeyType="done"
+        blurOnSubmit={true}
+        onSubmitEditing={Keyboard.dismiss}
+      />
+    </View>
+  );
 
   if (loading) {
     return (
@@ -195,190 +232,173 @@ export default function RescheduleModal() {
             maxWidth: 400,
             alignSelf: 'center'
           }}>
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <View style={{ marginBottom: 20 }}>
-                <Text style={{ 
-                  color: 'white', 
-                  fontSize: 20, 
-                  fontWeight: '600', 
-                  textAlign: 'center',
-                  marginBottom: 16
-                }}>
-                  Перенос приема
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ 
+                color: 'white', 
+                fontSize: 20, 
+                fontWeight: '600', 
+                textAlign: 'center',
+                marginBottom: 12
+              }}>
+                Перенос приема
+              </Text>
+              
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Icon source="clock-outline" size={18} color="#aaa" style={{ marginRight: 8 }} />
+                <Text style={{ color: '#ccc', fontSize: 14 }}>
+                  Текущее время: {plannedTime}
                 </Text>
-                
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                  <Icon source="clock-outline" size={18} color="#aaa" style={{ marginRight: 8 }} />
-                  <Text style={{ color: '#ccc', fontSize: 14 }}>
-                    Текущее время: {plannedTime}
-                  </Text>
-                </View>
-                
-                <Text style={{ 
-                  color: '#ccc', 
-                  fontSize: 16, 
-                  fontWeight: '600', 
-                  marginTop: 16,
-                  marginBottom: 8
-                }}>
-                  Новая дата
-                </Text>
-                
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>День</Text>
-                    <TextInput
-                      ref={dayInput}
-                      style={{
-                        backgroundColor: '#2C2C2C',
-                        color: 'white',
-                        padding: 12,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: error ? '#FF3B30' : '#333',
-                      }}
-                      placeholder="01-31"
-                      value={day}
-                      onChangeText={setDay}
-                      keyboardType="numeric"
-                      maxLength={2}
-                      placeholderTextColor="#666"
-                      returnKeyType="next"
-                      onSubmitEditing={() => monthInput.current?.focus()}
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginHorizontal: 4 }}>
-                    <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Месяц</Text>
-                    <TextInput
-                      ref={monthInput}
-                      style={{
-                        backgroundColor: '#2C2C2C',
-                        color: 'white',
-                        padding: 12,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: error ? '#FF3B30' : '#333',
-                      }}
-                      placeholder="01-12"
-                      value={month}
-                      onChangeText={setMonth}
-                      keyboardType="numeric"
-                      maxLength={2}
-                      placeholderTextColor="#666"
-                      returnKeyType="next"
-                      onSubmitEditing={() => yearInput.current?.focus()}
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Год</Text>
-                    <TextInput
-                      ref={yearInput}
-                      style={{
-                        backgroundColor: '#2C2C2C',
-                        color: 'white',
-                        padding: 12,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: error ? '#FF3B30' : '#333',
-                      }}
-                      placeholder="2023"
-                      value={year}
-                      onChangeText={setYear}
-                      keyboardType="numeric"
-                      maxLength={4}
-                      placeholderTextColor="#666"
-                      returnKeyType="next"
-                      onSubmitEditing={() => hoursInput.current?.focus()}
-                    />
-                  </View>
-                </View>
-                
-                <Text style={{ 
-                  color: '#ccc', 
-                  fontSize: 16, 
-                  fontWeight: '600', 
-                  marginTop: 16,
-                  marginBottom: 8
-                }}>
-                  Новое время
-                </Text>
-                
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Часы</Text>
-                    <TextInput
-                      ref={hoursInput}
-                      style={{
-                        backgroundColor: '#2C2C2C',
-                        color: 'white',
-                        padding: 12,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: error ? '#FF3B30' : '#333',
-                      }}
-                      placeholder="00-23"
-                      value={hours}
-                      onChangeText={setHours}
-                      keyboardType="numeric"
-                      maxLength={2}
-                      placeholderTextColor="#666"
-                      returnKeyType="next"
-                      onSubmitEditing={() => minutesInput.current?.focus()}
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Минуты</Text>
-                    <TextInput
-                      ref={minutesInput}
-                      style={{
-                        backgroundColor: '#2C2C2C',
-                        color: 'white',
-                        padding: 12,
-                        borderRadius: 8,
-                        borderWidth: 1,
-                        borderColor: error ? '#FF3B30' : '#333',
-                      }}
-                      placeholder="00-59"
-                      value={minutes}
-                      onChangeText={setMinutes}
-                      keyboardType="numeric"
-                      maxLength={2}
-                      placeholderTextColor="#666"
-                      returnKeyType="done"
-                      onSubmitEditing={Keyboard.dismiss}
-                    />
-                  </View>
-                </View>
-                
-                {error ? <Text style={{ color: '#FF3B30', fontSize: 14, marginBottom: 16 }}>{error}</Text> : null}
-                
-                <Divider style={{ backgroundColor: '#333', marginVertical: 12 }} />
-                
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Button
-                    mode="outlined"
-                    onPress={() => {
-                      Keyboard.dismiss();
-                      router.back();
+              </View>
+              
+              <Text style={{ 
+                color: '#ccc', 
+                fontSize: 16, 
+                fontWeight: '600', 
+                marginTop: 12,
+                marginBottom: 8
+              }}>
+                Новая дата
+              </Text>
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>День</Text>
+                  <TextInput
+                    style={{
+                      backgroundColor: '#2C2C2C',
+                      color: 'white',
+                      padding: 12,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: error ? '#FF3B30' : '#333',
                     }}
-                    style={{ flex: 1, marginRight: 8 }}
-                    textColor="white"
-                    borderColor="#555"
-                  >
-                    Отмена
-                  </Button>
-                  <Button
-                    mode="contained"
-                    onPress={handleConfirm}
-                    style={{ flex: 1, marginLeft: 8 }}
-                    buttonColor="#4A3AFF"
-                    textColor="white"
-                  >
-                    Подтвердить
-                  </Button>
+                    placeholder="01-31"
+                    value={day}
+                    onChangeText={setDay}
+                    keyboardType="numeric"
+                    maxLength={2}
+                    placeholderTextColor="#666"
+                  />
+                </View>
+                <View style={{ flex: 1, marginHorizontal: 4 }}>
+                  <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Месяц</Text>
+                  <TextInput
+                    style={{
+                      backgroundColor: '#2C2C2C',
+                      color: 'white',
+                      padding: 12,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: error ? '#FF3B30' : '#333',
+                    }}
+                    placeholder="01-12"
+                    value={month}
+                    onChangeText={setMonth}
+                    keyboardType="numeric"
+                    maxLength={2}
+                    placeholderTextColor="#666"
+                  />
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Год</Text>
+                  <TextInput
+                    style={{
+                      backgroundColor: '#2C2C2C',
+                      color: 'white',
+                      padding: 12,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: error ? '#FF3B30' : '#333',
+                    }}
+                    placeholder="2023"
+                    value={year}
+                    onChangeText={setYear}
+                    keyboardType="numeric"
+                    maxLength={4}
+                    placeholderTextColor="#666"
+                  />
                 </View>
               </View>
-            </ScrollView>
+              
+              <Text style={{ 
+                color: '#ccc', 
+                fontSize: 16, 
+                fontWeight: '600', 
+                marginTop: 16,
+                marginBottom: 8
+              }}>
+                Новое время
+              </Text>
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Часы</Text>
+                  <TextInput
+                    style={{
+                      backgroundColor: '#2C2C2C',
+                      color: 'white',
+                      padding: 12,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: error ? '#FF3B30' : '#333',
+                    }}
+                    placeholder="00-23"
+                    value={hours}
+                    onChangeText={setHours}
+                    keyboardType="numeric"
+                    maxLength={2}
+                    placeholderTextColor="#666"
+                  />
+                </View>
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={{ color: '#ccc', fontSize: 14, marginBottom: 4 }}>Минуты</Text>
+                  <TextInput
+                    style={{
+                      backgroundColor: '#2C2C2C',
+                      color: 'white',
+                      padding: 12,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: error ? '#FF3B30' : '#333',
+                    }}
+                    placeholder="00-59"
+                    value={minutes}
+                    onChangeText={setMinutes}
+                    keyboardType="numeric"
+                    maxLength={2}
+                    placeholderTextColor="#666"
+                  />
+                </View>
+              </View>
+              
+              {error ? <Text style={{ color: '#FF3B30', fontSize: 14, marginTop: 10 }}>{error}</Text> : null}
+              
+              <Divider style={{ backgroundColor: '#333', marginVertical: 16 }} />
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Button
+                  mode="outlined"
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    router.back();
+                  }}
+                  style={{ flex: 1, marginRight: 8 }}
+                  textColor="white"
+                  borderColor="#555"
+                >
+                  Отмена
+                </Button>
+                <Button
+                  mode="contained"
+                  onPress={handleConfirm}
+                  style={{ flex: 1, marginLeft: 8 }}
+                  buttonColor="#4A3AFF"
+                  textColor="white"
+                >
+                  Подтвердить
+                </Button>
+              </View>
+            </View>
           </Surface>
         </Modal>
       </Portal>
