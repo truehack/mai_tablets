@@ -16,7 +16,7 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Автозаполнение для dev (не в prod)
+  // 🔧 Автозаполнение для dev (только в __DEV__ и на web)
   useEffect(() => {
     if (__DEV__ && Platform.OS === 'web') {
       setLogin('testuser123');
@@ -49,6 +49,7 @@ export default function RegisterScreen() {
     },
   }));
 
+  // 🔎 Валидация логина
   const validateUsername = (value: string): string | null => {
     const trimmed = value.trim();
     if (!trimmed) return 'Обязательное поле';
@@ -60,6 +61,7 @@ export default function RegisterScreen() {
     return null;
   };
 
+  // ✅ Регистрация
   const handleRegister = useCallback(async () => {
     const validationError = validateUsername(login);
     if (validationError) {
@@ -71,7 +73,7 @@ export default function RegisterScreen() {
     try {
       setLoading(true);
 
-      // 📡 Запрос к FastAPI (http://192.168.31.174:8000/auth/register)
+      // 📡 Запрос к бэкенду: регистрация в MAI Tablets
       const response = await apiClient.post('/auth/register', {
         username: login.trim(),
       });
@@ -82,22 +84,22 @@ export default function RegisterScreen() {
         throw new Error('Сервер не вернул UUID или пароль');
       }
 
-      // 💾 Явное сохранение в SQLite (smartdoctor.db)
+      // 💾 Сохранение в локальную базу (без облака!)
       await saveLocalUser({
         uuid,
         password,
         username,
       });
 
-      // ✅ Успешно — показываем данные
+      // 🎉 Успех — показываем данные пользователю
       Alert.alert(
         '✅ Регистрация успешна',
-        `Твой идентификатор:\n${uuid}\n\nПароль:\n${password}\n\n🔒 Сохранён в защищённой локальной базе.`,
+        `Твой идентификатор:\n${uuid}\n\nПароль:\n${password}\n\n🔒 Сохранён только на этом устройстве.\nДанные НЕ передаются автоматически — ты полностью контролируешь синхронизацию.`,
         [
           {
-            text: 'Перейти в приложение',
+            text: 'Войти в MAI Tablets',
             onPress: () => {
-              router.replace('/tabs/schedule');
+              router.replace('/tabs');
             },
           },
         ],
@@ -111,7 +113,9 @@ export default function RegisterScreen() {
 
       let message = e.message || 'Не удалось зарегистрироваться';
       if (message.includes('Network request failed')) {
-        message = 'Нет связи с сервером. Проверь Wi-Fi и что сервер запущен.';
+        message = 'Нет связи с сервером MAI. Проверь Wi-Fi и что сервер запущен.';
+      } else if (message.includes('already exists')) {
+        message = 'Это имя уже занято. Попробуй другое.';
       }
 
       Alert.alert('❌ Ошибка', message);
@@ -126,10 +130,10 @@ export default function RegisterScreen() {
       <Screen header style={styles.wrapper}>
         <View style={styles.container}>
           <View>
-            <Text style={styles.title}>Создай профиль</Text>
+            <Text style={styles.title}>Создай профиль в MAI Tablets</Text>
             <Text style={styles.subtitle}>
-              Введи имя пользователя — мы создадим для тебя уникальный UUID и пароль.
-              Данные хранятся локально и синхронизируются только при твоём согласии.
+              Введи имя пользователя — мы создадим для тебя уникальный 🆔 UUID и 🔑 пароль.
+              Все данные хранятся локально. Синхронизация возможна только по твоему решению.
             </Text>
           </View>
 
@@ -162,8 +166,9 @@ export default function RegisterScreen() {
           loading={loading}
           disabled={loading || !login.trim()}
           style={{ marginTop: 16 }}
+          contentStyle={{ paddingVertical: 12 }}
         >
-          {loading ? 'Создаём...' : 'Зарегистрироваться'}
+          {loading ? 'Создаём профиль...' : 'Зарегистрироваться'}
         </Button>
       </Screen>
     </>
