@@ -1,5 +1,3 @@
-// app/(tabs)/schedule.tsx
-
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { View, FlatList, TouchableOpacity } from 'react-native';
 import { Text, Card, FAB } from 'react-native-paper';
@@ -21,7 +19,6 @@ export default function Schedule() {
     return new Date(today.setDate(diff));
   });
   const [selectedDay, setSelectedDay] = useState<string>('');
-
   const days = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
 
   useEffect(() => {
@@ -58,6 +55,13 @@ export default function Schedule() {
     }, [loadMeds, loadHistory])
   );
 
+  const formatTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
   const getIntakeStatusForDate = (medicationId: number, date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
     const dayIntakes = intakeHistory.filter(
@@ -65,16 +69,61 @@ export default function Schedule() {
         intake.medication_id === medicationId &&
         intake.datetime.startsWith(dateStr)
     );
-    const lastIntake = dayIntakes[0];
-    if (lastIntake) {
-      const time = new Date(lastIntake.datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      if (lastIntake.taken) {
-        return { status: 'Принято', time, color: '#34C759' }; // ✅ Зелёный
-      } else if (lastIntake.skipped) {
-        return { status: 'Пропущено', time, color: '#FF9500' }; // ✅ Оранжевый
+    
+    // Проверяем, есть ли перенос на этот день
+    const rescheduledIntake = dayIntakes.find(intake => 
+      intake.notes && intake.notes.includes('перенесен на')
+    );
+    
+    if (rescheduledIntake) {
+      const match = rescheduledIntake.notes.match(/перенесен на (\d{2}\.\d{2}\.\d{4}) (\d{2}:\d{2})/);
+      if (match) {
+        const [_, formattedDate, formattedTime] = match;
+        return { 
+          status: `Перенесено на ${formattedDate}`, 
+          time: formattedTime, // Show the time as well
+          color: '#4A3AFF',
+          isRescheduled: true
+        };
       }
     }
-    return { status: 'Не принято', time: null, color: '#FF3B30' }; // ✅ Красный
+    
+    // Проверяем, есть ли перенесенный прием на эту дату
+    const incomingReschedule = dayIntakes.find(intake => 
+      intake.notes && intake.notes.includes('перенос из')
+    );
+    
+    if (incomingReschedule) {
+      const match = incomingReschedule.notes.match(/перенос из (\d{2}:\d{2})/);
+      if (match) {
+        const [_, originalTime] = match;
+        // Используем время из datetime поля, а не из formatTime, чтобы избежать проблем с часовыми поясами
+        const intakeDateTime = new Date(incomingReschedule.datetime);
+        const intakeHours = String(intakeDateTime.getUTCHours()).padStart(2, '0');
+        const intakeMinutes = String(intakeDateTime.getUTCMinutes()).padStart(2, '0');
+        const actualTime = `${intakeHours}:${intakeMinutes}`;
+        
+        return {
+          status: `Перенесено из ${originalTime}`,
+          time: actualTime,
+          color: '#4A3AFF',
+          isRescheduled: true
+        };
+      }
+    }
+    
+    // Проверяем обычные приемы
+    const lastIntake = dayIntakes[0];
+    if (lastIntake) {
+      const time = formatTime(lastIntake.datetime);
+      if (lastIntake.taken) {
+        return { status: 'Принято', time, color: '#34C759', isRescheduled: false };
+      } else if (lastIntake.skipped) {
+        return { status: 'Пропущено', time, color: '#FF9500', isRescheduled: false };
+      }
+    }
+    
+    return { status: 'Не принято', time: null, color: '#FF3B30', isRescheduled: false };
   };
 
   const getDateForDay = (dayIndex: number) => {
@@ -88,14 +137,14 @@ export default function Schedule() {
     const start = new Date(med.start_date);
     if (isNaN(start.getTime())) return false;
 
-    // ✅ Проверяем, что выбранный день >= даты начала (включительно)
+    // Проверяем, что выбранный день >= даты начала (включительно)
     const selectedDate = getDateForDay(days.indexOf(day)); // день, на который ты смотришь
     const startDay = start.toISOString().split('T')[0];
     const selectedDayStr = selectedDate.toISOString().split('T')[0];
 
     if (selectedDayStr < startDay) return false;
 
-    // ✅ Проверяем, что дата окончания не раньше, чем выбранный день (включительно)
+    // Проверяем, что дата окончания не раньше, чем выбранный день (включительно)
     if (med.end_date) {
       const end = new Date(med.end_date); // строка в формате YYYY-MM-DD
       const endDay = end.toISOString().split('T')[0];
@@ -104,18 +153,33 @@ export default function Schedule() {
       if (selectedDayStr > endDay) return false;
     }
 
+    // Проверяем, не было ли переноса на этот день
+    const incomingReschedules = intakeHistory.filter(intake => 
+      intake.medication_id === med.id && 
+      intake.notes && 
+      intake.notes.includes('перенос из') &&
+      intake.datetime.startsWith(selectedDayStr) // Check if the datetime starts with the selected day
+    );
+
+    // Если есть перенос на этот день, то показываем
+    if (incomingReschedules.length > 0) {
+      return true;
+    }
+
+    // Проверяем расписание
+    let shouldShowBySchedule = false;
     if (med.schedule_type === 'daily') {
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
       const startStr = start.toISOString().split('T')[0];
-      return startStr <= todayStr;
+      shouldShowBySchedule = startStr <= todayStr;
     }
 
     if (med.schedule_type === 'weekly_days' && med.weekly_days) {
       try {
         const daysList = typeof med.weekly_days === 'string' ? JSON.parse(med.weekly_days) : med.weekly_days;
         if (Array.isArray(daysList)) {
-          return daysList.includes(day);
+          shouldShowBySchedule = daysList.includes(day);
         }
       } catch {
         return false;
@@ -127,17 +191,41 @@ export default function Schedule() {
       const diffMs = targetDate.getTime() - start.getTime();
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       if (diffDays < 0) return false;
-      return diffDays % med.interval_days === 0;
+      shouldShowBySchedule = diffDays % med.interval_days === 0;
     }
 
-    return false;
+    // If medication would normally appear by schedule, check if it was rescheduled away
+    if (shouldShowBySchedule) {
+      // Check if there's a "перенесен на" record for this medication 
+      // where the planned_time matches what would be scheduled on this date
+      // We need to determine what times are normally scheduled on this date
+      const times = typeof med.times_list === 'string' ? med.times_list : Array.isArray(med.times_list) ? med.times_list.join(', ') : '';
+      const scheduledTimes = times.split(',').map(t => t.trim()).filter(t => t.length > 0);
+      
+      // Check if any of the scheduled times for this medication have been rescheduled away
+      // Look for records where notes contains 'перенесен на' and it's related to this medication
+      const rescheduledAway = intakeHistory.some(intake => 
+        intake.medication_id === med.id && 
+        intake.notes && 
+        intake.notes.includes('перенесен на') &&
+        scheduledTimes.includes(intake.planned_time) &&  // Check if the planned time matches
+        intake.datetime.split('T')[0] === selectedDayStr  // Check if original date matches
+      );
+      
+      if (rescheduledAway) {
+        return false; // Don't show if it was rescheduled away from this date
+      }
+    }
+
+    // Return whether it should show by original schedule and wasn't rescheduled away
+    return shouldShowBySchedule;
   };
 
   const filteredMeds = useMemo(() => {
     return medications.filter(m => isMedForSelectedDay(m, selectedDay));
   }, [medications, selectedDay]);
 
-  // ✅ Изменено: теперь ±8 недель (56 дней)
+  // Изменено: теперь ±8 недель (56 дней)
   const minDate = new Date();
   minDate.setDate(minDate.getDate() - 56); // 8 недель назад
   const maxDate = new Date();
@@ -239,8 +327,8 @@ export default function Schedule() {
               currentMonday.setDate(diff);
               setCurrentWeekStart(currentMonday);
               const todayIndex = realToday.getDay();
-              const todayDay = days[(todayIndex + 6) % 7];
-              setSelectedDay(todayDay);
+              const today = days[(todayIndex + 6) % 7];
+              setSelectedDay(today);
             }}
             style={{
               backgroundColor: '#4A3AFF',
@@ -284,14 +372,13 @@ export default function Schedule() {
             <TouchableOpacity
               onPress={() =>
                 router.push(
-                  `/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(times)}`
+                  `/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(statusInfo.time || times)}`
                 )
               }
             >
               <View style={{ marginBottom: 16 }}>
                 <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
                   {times}{' '}
-                  <Text style={{ color: '#aaa', fontWeight: '500' }}>|</Text>{' '}
                   <Text style={{ color: statusColor, fontWeight: '500' }}>
                     {statusInfo.status}{statusInfo.time ? ` в ${statusInfo.time}` : ''}
                   </Text>
