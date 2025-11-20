@@ -153,6 +153,19 @@ export default function Schedule() {
       if (selectedDayStr > endDay) return false;
     }
 
+    // Проверяем, не было ли переноса на этот день
+    const incomingReschedules = intakeHistory.filter(intake => 
+      intake.medication_id === med.id && 
+      intake.notes && 
+      intake.notes.includes('перенос из') &&
+      intake.datetime.startsWith(selectedDayStr) // Check if the datetime starts with the selected day
+    );
+
+    // Если есть перенос на этот день, то показываем
+    if (incomingReschedules.length > 0) {
+      return true;
+    }
+
     // Проверяем расписание
     let shouldShowBySchedule = false;
     if (med.schedule_type === 'daily') {
@@ -190,26 +203,18 @@ export default function Schedule() {
       const scheduledTimes = times.split(',').map(t => t.trim()).filter(t => t.length > 0);
       
       // Check if any of the scheduled times for this medication have been rescheduled away
+      // Look for records where notes contains 'перенесен на' and it's related to this medication
       const rescheduledAway = intakeHistory.some(intake => 
         intake.medication_id === med.id && 
         intake.notes && 
         intake.notes.includes('перенесен на') &&
-        scheduledTimes.includes(intake.planned_time)  // Check if the planned time matches
+        scheduledTimes.includes(intake.planned_time) &&  // Check if the planned time matches
+        intake.datetime.split('T')[0] === selectedDayStr  // Check if original date matches
       );
       
       if (rescheduledAway) {
         return false; // Don't show if it was rescheduled away from this date
       }
-    }
-
-    // Дополнительно проверяем, не было ли переноса на этот день
-    if (intakeHistory.some(intake => 
-      intake.medication_id === med.id && 
-      intake.notes && 
-      intake.notes.includes('перенос из') &&
-      intake.notes.includes(selectedDayStr)
-    )) {
-      return true;
     }
 
     // Return whether it should show by original schedule and wasn't rescheduled away
