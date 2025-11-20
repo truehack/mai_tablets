@@ -270,6 +270,9 @@ export default function RescheduleModal() {
                     keyboardType="numeric"
                     maxLength={2}
                     placeholderTextColor="#666"
+                    returnKeyType="done"
+                    blurOnSubmit={true}
+                    onSubmitEditing={() => Keyboard.dismiss()}
                   />
                 </View>
                 <View style={{ flex: 1, marginHorizontal: 4 }}>
@@ -289,6 +292,9 @@ export default function RescheduleModal() {
                     keyboardType="numeric"
                     maxLength={2}
                     placeholderTextColor="#666"
+                    returnKeyType="done"
+                    blurOnSubmit={true}
+                    onSubmitEditing={() => Keyboard.dismiss()}
                   />
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
@@ -308,6 +314,9 @@ export default function RescheduleModal() {
                     keyboardType="numeric"
                     maxLength={4}
                     placeholderTextColor="#666"
+                    returnKeyType="done"
+                    blurOnSubmit={true}
+                    onSubmitEditing={() => Keyboard.dismiss()}
                   />
                 </View>
               </View>
@@ -340,6 +349,9 @@ export default function RescheduleModal() {
                     keyboardType="numeric"
                     maxLength={2}
                     placeholderTextColor="#666"
+                    returnKeyType="done"
+                    blurOnSubmit={true}
+                    onSubmitEditing={() => Keyboard.dismiss()}
                   />
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
@@ -359,6 +371,9 @@ export default function RescheduleModal() {
                     keyboardType="numeric"
                     maxLength={2}
                     placeholderTextColor="#666"
+                    returnKeyType="done"
+                    blurOnSubmit={true}
+                    onSubmitEditing={() => Keyboard.dismiss()}
                   />
                 </View>
               </View>

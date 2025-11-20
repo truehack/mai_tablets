@@ -57,8 +57,8 @@ export default function Schedule() {
 
   const formatTime = (dateString: string): string => {
     const date = new Date(dateString);
-    const hours = String(date.getUTCHours()).padStart(2, '0');
-    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
     return `${hours}:${minutes}`;
   };
 
@@ -80,7 +80,7 @@ export default function Schedule() {
       if (match) {
         const [_, formattedDate, formattedTime] = match;
         return { 
-          status: `Перенесено на ${formattedTime}`, 
+          status: `Перенесено на ${formattedDate} ${formattedTime}`, 
           time: formattedTime,
           color: '#4A3AFF',
           isRescheduled: true
