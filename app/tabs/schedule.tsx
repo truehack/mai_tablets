@@ -81,7 +81,7 @@ export default function Schedule() {
         const [_, formattedDate, formattedTime] = match;
         return { 
           status: `Перенесено на ${formattedDate}`, 
-          time: null, // Don't show time again since it's already in the status
+          time: formattedTime, // Show the time as well
           color: '#4A3AFF',
           isRescheduled: true
         };
@@ -372,7 +372,7 @@ export default function Schedule() {
             <TouchableOpacity
               onPress={() =>
                 router.push(
-                  `/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(times)}`
+                  `/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(statusInfo.time || times)}`
                 )
               }
             >
