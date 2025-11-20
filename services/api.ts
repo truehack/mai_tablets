@@ -38,6 +38,58 @@ const ensureISOZ = (dt: string | Date): string => {
 };
 
 export const apiClient = {
+  // ✅ GET без авторизации
+  get: async <T = any>(endpoint: string): Promise<T> => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    console.log(`📡 GET ${url}`);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      let message = `Ошибка ${response.status}`;
+      try {
+        const errorData = await response.json();
+        message = errorData.detail || message;
+      } catch {}
+      throw new Error(message);
+    }
+
+    return response.json();
+  },
+
+  // ✅ GET с авторизацией (Basic Auth)
+  getWithAuth: async <T = any>(endpoint: string): Promise<T> => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    console.log(`📡 GET (auth) ${url}`);
+
+    const user = await getLocalUser();
+    if (!user) throw new Error('Требуется авторизация');
+
+    const credentials = btoa(`${user.patient_uuid}:${user.patient_password_hash}`);
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${credentials}`,
+      },
+    });
+
+    if (!response.ok) {
+      let message = `Ошибка ${response.status}`;
+      try {
+        const errorData = await response.json();
+        message = errorData.detail || message;
+      } catch {}
+      throw new Error(message);
+    }
+
+    return response.json();
+  },
+
+  // ✅ POST без авторизации
   post: async <T = any>(endpoint: string, body: any): Promise<T> => {
     const url = `${API_BASE_URL}${endpoint}`;
     console.log(`📡 POST ${url}`);
@@ -60,6 +112,7 @@ export const apiClient = {
     return response.json();
   },
 
+  // ✅ POST с авторизацией
   postWithAuth: async <T = any>(endpoint: string, body: any): Promise<T> => {
     const url = `${API_BASE_URL}${endpoint}`;
     console.log(`📡 POST (auth) ${url}`);
@@ -112,7 +165,6 @@ export const apiClient = {
       console.log('📤 Синхронизация приёма →', payload);
       await apiClient.postWithAuth('/intake/add_or_update', payload);
       console.log('✅ Синхронизация успешна');
-
     } catch (error: any) {
       console.warn('⚠️ Ошибка синхронизации:', error.message);
       throw error;
