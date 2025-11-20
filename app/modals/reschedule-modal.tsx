@@ -36,15 +36,7 @@ export default function RescheduleModal() {
     loadMed();
   }, [medicationId]);
 
-  // Автозаполнение текущей даты при открытии
-  useEffect(() => {
-    if (!loading) {
-      const today = new Date();
-      setDay(String(today.getDate()).padStart(2, '0'));
-      setMonth(String(today.getMonth() + 1).padStart(2, '0'));
-      setYear(String(today.getFullYear()));
-    }
-  }, [loading]);
+  // Убираем автозаполнение текущей даты при открытии
 
   const validateDay = (value: string): boolean => {
     if (!value) return false;
@@ -123,17 +115,17 @@ export default function RescheduleModal() {
       const formattedDate = `${day.padStart(2, '0')}.${month.padStart(2, '0')}.${year}`;
       const formattedTime = `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}`;
       
-      // Создаем дату и время без часового пояса
-      const targetDate = new Date(
+      // Создаем дату и время без часового пояса - используем UTC для избежания проблем с конвертацией
+      const targetDate = new Date(Date.UTC(
         parseInt(year),
         parseInt(month) - 1,
         parseInt(day),
         parseInt(hours),
         parseInt(minutes)
-      );
+      ));
       
-      // Сохраняем в формате, который не будет конвертирован в другой часовой пояс
-      const formattedDateTime = targetDate.toISOString().slice(0, 19);
+      // Сохраняем в формате ISO, но корректируем для правильного отображения
+      const formattedDateTime = targetDate.toISOString().slice(0, 19).replace('T', ' ');
       
       // 1. Создаем запись о переносе в текущем времени
       await addIntake({

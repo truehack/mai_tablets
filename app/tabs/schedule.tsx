@@ -57,8 +57,8 @@ export default function Schedule() {
 
   const formatTime = (dateString: string): string => {
     const date = new Date(dateString);
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
     return `${hours}:${minutes}`;
   };
 
@@ -97,9 +97,15 @@ export default function Schedule() {
       const match = incomingReschedule.notes.match(/перенос из (\d{2}:\d{2})/);
       if (match) {
         const [_, originalTime] = match;
+        // Используем время из datetime поля, а не из formatTime, чтобы избежать проблем с часовыми поясами
+        const intakeDateTime = new Date(incomingReschedule.datetime);
+        const intakeHours = String(intakeDateTime.getUTCHours()).padStart(2, '0');
+        const intakeMinutes = String(intakeDateTime.getUTCMinutes()).padStart(2, '0');
+        const actualTime = `${intakeHours}:${intakeMinutes}`;
+        
         return {
           status: `Перенесено из ${originalTime}`,
-          time: formatTime(incomingReschedule.datetime),
+          time: actualTime,
           color: '#4A3AFF',
           isRescheduled: true
         };
