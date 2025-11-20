@@ -133,9 +133,21 @@ export default function Schedule() {
     return false;
   };
 
-  const filteredMeds = useMemo(() => {
-    return medications.filter(m => isMedForSelectedDay(m, selectedDay));
-  }, [medications, selectedDay]);
+  // ✅ Сортировка: сначала по времени приёма, потом по названию
+  const sortedFilteredMeds = useMemo(() => {
+    const filtered = medications.filter(m => isMedForSelectedDay(m, selectedDay));
+
+    return filtered.sort((a, b) => {
+      // Получаем первое время приёма из times_list
+      const timeA = typeof a.times_list === 'string' ? a.times_list : Array.isArray(a.times_list) ? a.times_list[0] : '';
+      const timeB = typeof b.times_list === 'string' ? b.times_list : Array.isArray(b.times_list) ? b.times_list[0] : '';
+
+      // Сравниваем по времени (HH:MM)
+      if (timeA < timeB) return -1;
+      if (timeA > timeB) return 1;
+      return 0;
+    });
+  }, [medications, selectedDay]); // ✅ Добавлено intakeHistory для пересчёта статусов
 
   // ✅ Изменено: теперь ±8 недель (56 дней)
   const minDate = new Date();
@@ -220,11 +232,11 @@ export default function Schedule() {
           </TouchableOpacity>
         </View>
 
-        {/* Строка с датой и кнопкой "Сегодня" — дата ещё правее */}
+        {/* Строка с датой и кнопкой "Сегодня" — дата чуть правее */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          {/* Дата выбранного дня — по центру, ещё правее */}
+          {/* Дата выбранного дня — по центру, чуть правее */}
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 20 }}>
+            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 15 }}>
               {selectedDay && getDateForDay(days.indexOf(selectedDay)).toLocaleDateString('ru-RU')}
             </Text>
           </View>
@@ -258,8 +270,8 @@ export default function Schedule() {
 
       {/* Список лекарств */}
       <FlatList<Medication>
-        data={filteredMeds}
-        extraData={selectedDay}
+        data={sortedFilteredMeds}
+        extraData={[selectedDay, intakeHistory]} // ✅ Обновляем, если изменились статусы
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => {
           const selectedDate = getDateForDay(days.indexOf(selectedDay));
@@ -289,10 +301,11 @@ export default function Schedule() {
               }
             >
               <View style={{ marginBottom: 16 }}>
-                <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
+                {/* ✅ Увеличенный шрифт для времени и статуса */}
+                <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 16, fontWeight: '600' }}>
                   {times}{' '}
                   <Text style={{ color: '#aaa', fontWeight: '500' }}>|</Text>{' '}
-                  <Text style={{ color: statusColor, fontWeight: '500' }}>
+                  <Text style={{ color: statusColor, fontWeight: '500', fontSize: 16 }}>
                     {statusInfo.status}{statusInfo.time ? ` в ${statusInfo.time}` : ''}
                   </Text>
                 </Text>
@@ -316,10 +329,12 @@ export default function Schedule() {
                       <Text style={{ fontSize: 20 }}>{icon}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', marginBottom: 2 }}>
+                      {/* ✅ Увеличенный шрифт для названия лекарства */}
+                      <Text style={{ color: 'white', fontSize: 18, fontWeight: '600', marginBottom: 2 }}>
                         {item.name}
                       </Text>
-                      <Text style={{ color: '#ccc', fontSize: 13 }}>{item.form || '—'}</Text>
+                      {/* ✅ Увеличенный шрифт для формы */}
+                      <Text style={{ color: '#ccc', fontSize: 15 }}>{item.form || '—'}</Text>
                     </View>
                   </View>
                 </Card>
@@ -328,7 +343,7 @@ export default function Schedule() {
           );
         }}
         ListEmptyComponent={
-          <Text style={{ color: '#999', textAlign: 'center', marginTop: 40 }}>
+          <Text style={{ color: '#999', textAlign: 'center', marginTop: 40, fontSize: 16 }}>
             Нет медикаментов на {selectedDay}.
           </Text>
         }
