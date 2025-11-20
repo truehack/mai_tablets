@@ -160,6 +160,7 @@ export default function Add() {
   const [name, setName] = useState("");
   const [form, setForm] = useState<Medication["form"]>("tablet");
   const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState(""); // ✅ Новое поле
   const [scheduleType, setScheduleType] =
     useState<Medication["schedule_type"]>("daily");
   const [timesList, setTimesList] = useState("");
@@ -171,6 +172,7 @@ export default function Add() {
   const [nameError, setNameError] = useState("");
   const [formError, setFormError] = useState("");
   const [startDateError, setStartDateError] = useState("");
+  const [endDateError, setEndDateError] = useState(""); // ✅ Новое состояние
   const [scheduleTypeError, setScheduleTypeError] = useState("");
   const [timesListError, setTimesListError] = useState("");
   const [intervalDaysError, setIntervalDaysError] = useState("");
@@ -221,6 +223,7 @@ export default function Add() {
     setNameError("");
     setFormError("");
     setStartDateError("");
+    setEndDateError(""); // ✅ Сбрасываем ошибку даты окончания
     setScheduleTypeError("");
     setTimesListError("");
     setIntervalDaysError("");
@@ -246,6 +249,11 @@ export default function Add() {
       hasErrors = true;
     } else if (!validateDate(startDate)) {
       setStartDateError("Формат: ДД.ММ.ГГГГ, например 13.11.2025");
+      hasErrors = true;
+    }
+
+    if (endDate && !validateDate(endDate)) {
+      setEndDateError("Формат: ДД.ММ.ГГГГ, например 13.11.2025");
       hasErrors = true;
     }
 
@@ -285,17 +293,23 @@ export default function Add() {
 
     if (hasErrors) return;
 
-    // Конвертируем дату в YYYY-MM-DD
-    const [day, month, year] = startDate.split('.').map(Number);
-    const convertedDate = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+    // Конвертируем даты в YYYY-MM-DD
+    const [startDay, startMonth, startYear] = startDate.split('.').map(Number);
+    const convertedStartDate = `${startYear}-${startMonth.toString().padStart(2, '0')}-${startDay.toString().padStart(2, '0')}`;
+
+    let convertedEndDate = null;
+    if (endDate) {
+      const [endDay, endMonth, endYear] = endDate.split('.').map(Number);
+      convertedEndDate = `${endYear}-${endMonth.toString().padStart(2, '0')}-${endDay.toString().padStart(2, '0')}`;
+    }
 
     try {
       const med: Medication = {
         name,
         form,
         instructions: instructions || null,
-        start_date: convertedDate,
-        end_date: null,
+        start_date: convertedStartDate,
+        end_date: convertedEndDate,
         schedule_type: scheduleType,
         weekly_days: scheduleType === "weekly_days" ? selectedDays : null,
         interval_days: scheduleType === "every_x_days" ? parseInt(intervalDays, 10) : null,
@@ -409,6 +423,20 @@ export default function Add() {
         error={!!startDateError}
       />
       {startDateError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{startDateError}</Text> : null}
+
+      {/* Поле для даты окончания */}
+      <TextInput
+        label="Дата окончания (ДД.ММ.ГГГГ, по желанию)"
+        value={endDate}
+        onChangeText={setEndDate}
+        mode="outlined"
+        style={{ marginBottom: 8, backgroundColor: "#121212" }}
+        textColor="white"
+        outlineColor="#444"
+        activeOutlineColor="#4A3AFF"
+        error={!!endDateError}
+      />
+      {endDateError ? <Text style={{ color: "#FF3B30", fontSize: 12, marginBottom: 8 }}>{endDateError}</Text> : null}
 
       {/* Выбор типа расписания */}
       <Menu

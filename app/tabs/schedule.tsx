@@ -1,5 +1,3 @@
-// app/(tabs)/schedule.tsx
-
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { View, FlatList, TouchableOpacity } from 'react-native';
 import { Text, Card, FAB } from 'react-native-paper';
@@ -21,7 +19,6 @@ export default function Schedule() {
     return new Date(today.setDate(diff));
   });
   const [selectedDay, setSelectedDay] = useState<string>('');
-
   const days = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
 
   useEffect(() => {
@@ -58,6 +55,13 @@ export default function Schedule() {
     }, [loadMeds, loadHistory])
   );
 
+  const formatTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
+
   const getIntakeStatusForDate = (medicationId: number, date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
     const dayIntakes = intakeHistory.filter(
@@ -65,8 +69,55 @@ export default function Schedule() {
         intake.medication_id === medicationId &&
         intake.datetime.startsWith(dateStr)
     );
+    
+    // Проверяем, есть ли перенос на этот день
+    const rescheduledIntake = dayIntakes.find(intake => 
+      intake.notes && intake.notes.includes('перенесен на')
+    );
+    
+    if (rescheduledIntake) {
+      const match = rescheduledIntake.notes.match(/перенесен на (\d{2}\.\d{2}\.\d{4}) (\d{2}:\d{2})/);
+      if (match) {
+        const [_, formattedDate, formattedTime] = match;
+        return { 
+          status: `Перенесено на ${formattedTime}`, 
+          time: formattedTime,
+          color: '#4A3AFF',
+          isRescheduled: true
+        };
+      }
+    }
+    
+    // Проверяем, есть ли перенесенный прием на эту дату
+    const incomingReschedule = dayIntakes.find(intake => 
+      intake.notes && intake.notes.includes('перенос из')
+    );
+    
+    if (incomingReschedule) {
+      const match = incomingReschedule.notes.match(/перенос из (\d{2}:\d{2})/);
+      if (match) {
+        const [_, originalTime] = match;
+        return {
+          status: `Перенесено из ${originalTime}`,
+          time: formatTime(incomingReschedule.datetime),
+          color: '#4A3AFF',
+          isRescheduled: true
+        };
+      }
+    }
+    
+    // Проверяем обычные приемы
     const lastIntake = dayIntakes[0];
-    return lastIntake ? (lastIntake.taken ? 'Принято' : 'Пропущено') : 'Не принято';
+    if (lastIntake) {
+      const time = formatTime(lastIntake.datetime);
+      if (lastIntake.taken) {
+        return { status: 'Принято', time, color: '#34C759', isRescheduled: false };
+      } else if (lastIntake.skipped) {
+        return { status: 'Пропущено', time, color: '#FF9500', isRescheduled: false };
+      }
+    }
+    
+    return { status: 'Не принято', time: null, color: '#FF3B30', isRescheduled: false };
   };
 
   const getDateForDay = (dayIndex: number) => {
@@ -80,6 +131,23 @@ export default function Schedule() {
     const start = new Date(med.start_date);
     if (isNaN(start.getTime())) return false;
 
+    // Проверяем, что выбранный день >= даты начала (включительно)
+    const selectedDate = getDateForDay(days.indexOf(day)); // день, на который ты смотришь
+    const startDay = start.toISOString().split('T')[0];
+    const selectedDayStr = selectedDate.toISOString().split('T')[0];
+
+    if (selectedDayStr < startDay) return false;
+
+    // Проверяем, что дата окончания не раньше, чем выбранный день (включительно)
+    if (med.end_date) {
+      const end = new Date(med.end_date); // строка в формате YYYY-MM-DD
+      const endDay = end.toISOString().split('T')[0];
+
+      // Если выбранный день > даты окончания — не показываем
+      if (selectedDayStr > endDay) return false;
+    }
+
+    // Проверяем расписание
     if (med.schedule_type === 'daily') {
       const today = new Date();
       const todayStr = today.toISOString().split('T')[0];
@@ -106,6 +174,17 @@ export default function Schedule() {
       return diffDays % med.interval_days === 0;
     }
 
+    // Дополнительно проверяем, не было ли переноса на этот день
+    const selectedDateStr = selectedDate.toISOString().split('T')[0];
+    if (intakeHistory.some(intake => 
+      intake.medication_id === med.id && 
+      intake.notes && 
+      intake.notes.includes('перенос из') &&
+      intake.notes.includes(selectedDateStr)
+    )) {
+      return true;
+    }
+
     return false;
   };
 
@@ -113,7 +192,7 @@ export default function Schedule() {
     return medications.filter(m => isMedForSelectedDay(m, selectedDay));
   }, [medications, selectedDay]);
 
-  // ✅ Изменено: теперь ±8 недель (56 дней)
+  // Изменено: теперь ±8 недель (56 дней)
   const minDate = new Date();
   minDate.setDate(minDate.getDate() - 56); // 8 недель назад
   const maxDate = new Date();
@@ -196,11 +275,11 @@ export default function Schedule() {
           </TouchableOpacity>
         </View>
 
-        {/* Строка с датой и кнопкой "Сегодня" — дата чуть правее */}
+        {/* Строка с датой и кнопкой "Сегодня" — дата ещё правее */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          {/* Дата выбранного дня — по центру, чуть правее */}
+          {/* Дата выбранного дня — по центру, ещё правее */}
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 10 }}> {/* ✅ Сдвиг вправо */}
+            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 20 }}>
               {selectedDay && getDateForDay(days.indexOf(selectedDay)).toLocaleDateString('ru-RU')}
             </Text>
           </View>
@@ -215,8 +294,8 @@ export default function Schedule() {
               currentMonday.setDate(diff);
               setCurrentWeekStart(currentMonday);
               const todayIndex = realToday.getDay();
-              const todayDay = days[(todayIndex + 6) % 7];
-              setSelectedDay(todayDay);
+              const today = days[(todayIndex + 6) % 7];
+              setSelectedDay(today);
             }}
             style={{
               backgroundColor: '#4A3AFF',
@@ -239,8 +318,8 @@ export default function Schedule() {
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => {
           const selectedDate = getDateForDay(days.indexOf(selectedDay));
-          const status = getIntakeStatusForDate(item.id, selectedDate);
-          const statusColor = status === 'Принято' ? '#34C759' : status === 'Пропущено' ? '#FF9500' : '#FF3B30';
+          const statusInfo = getIntakeStatusForDate(item.id, selectedDate);
+          const statusColor = statusInfo.color;
           const times =
             typeof item.times_list === 'string'
               ? item.times_list
@@ -267,7 +346,9 @@ export default function Schedule() {
               <View style={{ marginBottom: 16 }}>
                 <Text style={{ color: '#aaa', marginBottom: 4, fontSize: 14, fontWeight: '600' }}>
                   {times}{' '}
-                  <Text style={{ color: statusColor, fontWeight: '500' }}>{status}</Text>
+                  <Text style={{ color: statusColor, fontWeight: '500' }}>
+                    {statusInfo.status}{statusInfo.time ? ` в ${statusInfo.time}` : ''}
+                  </Text>
                 </Text>
 
                 <Card

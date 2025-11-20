@@ -1,5 +1,3 @@
-// app/modals/take-medication-modal.tsx
-
 import React, { useEffect, useState } from 'react';
 import { View, Text, Alert, TouchableOpacity } from 'react-native';
 import { Card, Button, Portal, Modal, Provider, Surface, Icon } from 'react-native-paper';
@@ -9,33 +7,28 @@ import { useDatabase } from '@/hooks/use-database';
 export default function TakeMedicationModal() {
   const { medicationId, plannedTime } = useLocalSearchParams();
   const router = useRouter();
-  const { getMedications, addIntake, deleteMedication, deleteFutureIntakes } = useDatabase(); // ✅ Добавили deleteFutureIntakes
-
+  const { getMedications, addIntake, deleteMedication, deleteFutureIntakes } = useDatabase();
   const [medication, setMedication] = useState<any>(null);
-
+  const [loading, setLoading] = useState(true);
+  
   useEffect(() => {
     const loadMed = async () => {
       try {
-        console.log('Загрузка лекарства...');
-        console.log('medicationId из параметров:', medicationId);
-
+        setLoading(true);
         const meds = await getMedications();
-        console.log('Все лекарства из БД:', meds);
-
         const found = meds.find(m => m.id === Number(medicationId));
-        console.log('Найденное лекарство:', found);
-
         if (found) {
           setMedication(found);
-        } else {
-          console.log('Лекарство не найдено по id:', Number(medicationId));
         }
       } catch (error) {
         console.error('Ошибка загрузки лекарства:', error);
+        Alert.alert('Ошибка', 'Не удалось загрузить информацию о лекарстве');
+      } finally {
+        setLoading(false);
       }
     };
     loadMed();
-  }, [medicationId, getMedications]);
+  }, [medicationId]);
 
   const handleMarkAsTaken = async () => {
     try {
@@ -49,6 +42,7 @@ export default function TakeMedicationModal() {
       router.back();
     } catch (error) {
       console.error('Ошибка при отметке приёма:', error);
+      Alert.alert('Ошибка', 'Не удалось отметить приём');
     }
   };
 
@@ -64,6 +58,7 @@ export default function TakeMedicationModal() {
       router.back();
     } catch (error) {
       console.error('Ошибка при отметке пропуска:', error);
+      Alert.alert('Ошибка', 'Не удалось отметить пропуск');
     }
   };
 
@@ -71,23 +66,17 @@ export default function TakeMedicationModal() {
     router.back();
   };
 
-  const handleDelete = async () => {
-    console.log('handleDelete вызван!');
-    console.log('medicationId:', medicationId);
-    console.log('typeof medicationId:', typeof medicationId);
-    console.log('Number(medicationId):', Number(medicationId));
-    console.log('medication:', medication);
+  const handleReschedule = () => {
+    router.push(`/modals/reschedule-modal?medicationId=${medicationId}&plannedTime=${encodeURIComponent(plannedTime as string)}`);
+  };
 
+  const handleDelete = async () => {
     if (!medication) {
-      console.log('medication не загружен — невозможно удалить');
       Alert.alert('Ошибка', 'Не удалось загрузить информацию о лекарстве');
       return;
     }
-
+    
     const medicationName = medication?.name || 'лекарство';
-
-    console.log('Открываем Alert для удаления:', medicationName);
-
     Alert.alert(
       'Удалить лекарство?',
       `Вы уверены, что хотите удалить "${medicationName}"?`,
@@ -97,15 +86,9 @@ export default function TakeMedicationModal() {
           text: 'Удалить',
           style: 'destructive',
           onPress: async () => {
-            console.log('Подтверждение удаления получено');
             try {
-              console.log('Удаляем будущие приёмы...');
               await deleteFutureIntakes(Number(medicationId));
-
-              console.log('Удаляем лекарство...');
               await deleteMedication(Number(medicationId));
-
-              console.log('Лекарство и будущие приёмы удалены, закрываем модальное окно');
               router.back();
             } catch (error) {
               console.error('Ошибка при удалении лекарства:', error);
@@ -117,7 +100,7 @@ export default function TakeMedicationModal() {
     );
   };
 
-  if (!medication) {
+  if (loading) {
     return (
       <Provider>
         <Portal>
@@ -125,6 +108,22 @@ export default function TakeMedicationModal() {
             <Card style={{ margin: 20, backgroundColor: '#1E1E1E' }}>
               <Card.Content>
                 <Text style={{ color: 'white', textAlign: 'center' }}>Загрузка...</Text>
+              </Card.Content>
+            </Card>
+          </Modal>
+        </Portal>
+      </Provider>
+    );
+  }
+
+  if (!medication) {
+    return (
+      <Provider>
+        <Portal>
+          <Modal visible={true} onDismiss={handleCancel}>
+            <Card style={{ margin: 20, backgroundColor: '#1E1E1E' }}>
+              <Card.Content>
+                <Text style={{ color: 'white', textAlign: 'center' }}>Ошибка загрузки</Text>
               </Card.Content>
             </Card>
           </Modal>
@@ -151,7 +150,6 @@ export default function TakeMedicationModal() {
                 <Icon source="delete" size={40} color="#ff6b6b" />
               </TouchableOpacity>
             </View>
-
             {/* Content */}
             <View style={{ marginBottom: 20 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -160,7 +158,6 @@ export default function TakeMedicationModal() {
                   Запланировано на {plannedTime}, сегодня
                 </Text>
               </View>
-
               {medication.instructions && (
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginTop: 8 }}>
                   <Icon source="notebook" size={16} color="#aaa" style={{ marginRight: 8, marginTop: 4 }} />
@@ -170,7 +167,6 @@ export default function TakeMedicationModal() {
                 </View>
               )}
             </View>
-
             {/* Footer Buttons */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-around', paddingTop: 16, borderTopWidth: 1, borderTopColor: '#333' }}>
               <Button
@@ -183,7 +179,6 @@ export default function TakeMedicationModal() {
               >
                 <Icon source="close" size={20} color="white" />
               </Button>
-
               <Button
                 mode="contained"
                 onPress={handleMarkAsTaken}
@@ -194,10 +189,9 @@ export default function TakeMedicationModal() {
               >
                 <Icon source="check" size={20} color="white" />
               </Button>
-
               <Button
                 mode="contained"
-                onPress={handleCancel}
+                onPress={handleReschedule}
                 buttonColor="#4A3AFF"
                 textColor="white"
                 style={{ width: 80, height: 50, justifyContent: 'center' }}
@@ -206,7 +200,6 @@ export default function TakeMedicationModal() {
                 <Icon source="clock" size={20} color="white" />
               </Button>
             </View>
-
             {/* Labels under buttons */}
             <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginTop: 4 }}>
               <Text style={{ color: '#4A3AFF', fontSize: 12 }}>Пропустить</Text>
