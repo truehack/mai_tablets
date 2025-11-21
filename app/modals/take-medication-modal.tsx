@@ -33,17 +33,21 @@ export default function TakeMedicationModal() {
   useEffect(() => {
     const loadMed = async () => {
       try {
-        if (!medicationId) return;
-        
+        if (!medicationId) {
+          Alert.alert('Ошибка', 'ID лекарства не указан');
+          router.back();
+          return;
+        }
+
         const meds = await getMedications();
         const found = meds.find(m => m.id === Number(medicationId));
-        
+
         if (!found) {
           Alert.alert('Ошибка', 'Лекарство не найдено');
           router.back();
           return;
         }
-        
+
         setMedication(found);
       } catch (error) {
         console.error('Ошибка загрузки лекарства:', error);
@@ -55,7 +59,7 @@ export default function TakeMedicationModal() {
     loadMed();
   }, [medicationId, router]);
 
-  // Анимация появления модалки
+  // Анимация появления
   useEffect(() => {
     if (medication) {
       Animated.parallel([
@@ -98,7 +102,6 @@ export default function TakeMedicationModal() {
     if (actionStatus) {
       confirmScale.setValue(0.7);
       confirmOpacity.setValue(0);
-      
       Animated.parallel([
         Animated.spring(confirmScale, {
           toValue: 1,
@@ -116,61 +119,129 @@ export default function TakeMedicationModal() {
   }, [actionStatus]);
 
   const handleIntakeAction = async (taken: boolean) => {
-    if (!medication) {
-      Alert.alert('Ошибка', 'Лекарство не загружено');
+    if (!medication || !plannedTime) {
+      Alert.alert('Ошибка', 'Недостаточно данных');
       return;
     }
 
-    // Вибрация кнопки
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-
     setIsSyncing(true);
 
     try {
-      const now = new Date();
-      const formattedTime = now.toLocaleTimeString([], { 
-        hour: '2-digit', 
+      // 🔹 Текущий момент — локальное время устройства (МСК)
+      const nowLocal = new Date();
+
+      // 🔹 Парсим plannedTime → локальная дата (МСК), НЕЗАВИСИМО от формата
+      let plannedLocal: Date | null = null;
+
+      // 1️⃣ "22:00" → сегодня в 22:00
+      if (/^\d{1,2}:\d{2}$/.test(plannedTime)) {
+        const [h, m] = plannedTime.split(':').map(Number);
+        plannedLocal = new Date(
+          nowLocal.getFullYear(),
+          nowLocal.getMonth(),
+          nowLocal.getDate(),
+          h,
+          m
+        );
+      }
+      // 2️⃣ "21.11.2025 22:00" или "21.11.2025"
+      else if (/^\d{1,2}\.\d{1,2}\.\d{4}/.test(plannedTime)) {
+        const parts = plannedTime.split(' ');
+        const [d, m, y] = parts[0].split('.').map(Number);
+        const [h, min] = (parts[1] || '00:00').split(':').map(Number);
+        plannedLocal = new Date(y, m - 1, d, h, min);
+      }
+      // 3️⃣ ISO строка: "2025-11-21T22:00:00" → считаем, что это ЛОКАЛЬНОЕ время
+      else {
+        const iso = new Date(plannedTime);
+        if (!isNaN(iso.getTime())) {
+          plannedLocal = new Date(
+            iso.getFullYear(),
+            iso.getMonth(),
+            iso.getDate(),
+            iso.getHours(),
+            iso.getMinutes(),
+            iso.getSeconds(),
+            iso.getMilliseconds()
+          );
+        }
+      }
+
+      if (!plannedLocal) {
+        throw new Error(`Некорректный формат plannedTime: ${plannedTime}`);
+      }
+
+      // ✅ Конвертация в UTC только для сервера
+      const plannedUtc = new Date(
+        Date.UTC(
+          plannedLocal.getFullYear(),
+          plannedLocal.getMonth(),
+          plannedLocal.getDate(),
+          plannedLocal.getHours(),
+          plannedLocal.getMinutes(),
+          plannedLocal.getSeconds(),
+          plannedLocal.getMilliseconds()
+        )
+      );
+
+      const actualUtc = new Date(
+        Date.UTC(
+          nowLocal.getFullYear(),
+          nowLocal.getMonth(),
+          nowLocal.getDate(),
+          nowLocal.getHours(),
+          nowLocal.getMinutes(),
+          nowLocal.getSeconds(),
+          nowLocal.getMilliseconds()
+        )
+      );
+
+      // ✅ Формат времени для отображения (локальное)
+      const formattedTime = nowLocal.toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
         minute: '2-digit',
-        hour12: false 
+        hour12: false,
       });
-      
+
+      // ✅ Локальное сохранение (всё как локальное время)
       const localIntakeData = {
         medication_id: medication.id,
-        planned_time: plannedTime,
-        datetime: now.toISOString(),
+        planned_time: plannedLocal.toISOString(), // можно заменить на formatLocalDateTime(plannedLocal)
+        datetime: nowLocal.toISOString(),
         taken,
         skipped: !taken,
       };
 
+      // ✅ Серверное (строго UTC)
       const serverIntakeData = {
         medication_id: medication.server_id,
-        planned_time: plannedTime,
-        datetime: now.toISOString(),
+        planned_time: plannedUtc.toISOString(),
+        datetime: actualUtc.toISOString(),
         taken,
         skipped: !taken,
       };
 
       // 1️⃣ Сохраняем локально
-      const localId = await addIntake(localIntakeData);
+      await addIntake(localIntakeData);
 
-      // 2️⃣ Устанавливаем статус действия
+      // 2️⃣ Устанавливаем статус
       setActionStatus({ 
         type: taken ? 'taken' : 'skipped', 
         time: formattedTime 
       });
 
-      // 3️⃣ Синхронизируем
+      // 3️⃣ Синхронизация
       if (medication.server_id != null) {
         try {
           await apiClient.intakeSync(serverIntakeData);
         } catch (syncError: any) {
-          console.warn('Синхронизация отложена:', syncError.message);
+          console.warn('⚠️ Синхронизация отложена:', syncError.message);
         }
       }
 
-      // ✅ Закрываем через 1.5 сек
+      // ✅ Автозакрытие
       setTimeout(() => {
-        // Анимация исчезновения
         Animated.parallel([
           Animated.timing(scaleAnim, {
             toValue: 0.9,
@@ -198,7 +269,6 @@ export default function TakeMedicationModal() {
   const handleMarkAsTaken = () => handleIntakeAction(true);
   const handleMarkAsSkipped = () => handleIntakeAction(false);
   const handleCancel = () => {
-    // Анимация закрытия
     Animated.parallel([
       Animated.timing(scaleAnim, {
         toValue: 0.9,
@@ -230,8 +300,6 @@ export default function TakeMedicationModal() {
             try {
               await deleteFutureIntakes(medication.id);
               await deleteMedication(medication.id);
-              
-              // Анимация удаления
               Animated.timing(scaleAnim, {
                 toValue: 0.8,
                 duration: 200,
@@ -249,6 +317,7 @@ export default function TakeMedicationModal() {
     );
   };
 
+  // === RENDER ===
   if (!medication) {
     return (
       <Provider>
@@ -294,21 +363,41 @@ export default function TakeMedicationModal() {
     );
   }
 
-  // Форматируем время
-  const displayTime = (() => {
-    try {
-      if (/^\d{1,2}:\d{2}/.test(plannedTime)) {
-        return plannedTime;
+  // Отображаемое время (локальное)
+  let displayTime = plannedTime;
+  try {
+    let plannedLocal: Date | null = null;
+    if (/^\d{1,2}:\d{2}$/.test(plannedTime)) {
+      const now = new Date();
+      const [h, m] = plannedTime.split(':').map(Number);
+      plannedLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m);
+    } else if (/^\d{1,2}\.\d{1,2}\.\d{4}/.test(plannedTime)) {
+      const parts = plannedTime.split(' ');
+      const [d, m, y] = parts[0].split('.').map(Number);
+      const [h, min] = (parts[1] || '00:00').split(':').map(Number);
+      plannedLocal = new Date(y, m - 1, d, h, min);
+    } else {
+      const iso = new Date(plannedTime);
+      if (!isNaN(iso.getTime())) {
+        plannedLocal = new Date(
+          iso.getFullYear(),
+          iso.getMonth(),
+          iso.getDate(),
+          iso.getHours(),
+          iso.getMinutes()
+        );
       }
-      const d = new Date(plannedTime);
-      if (!isNaN(d.getTime())) {
-        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      }
-      return plannedTime;
-    } catch {
-      return plannedTime;
     }
-  })();
+    if (plannedLocal) {
+      displayTime = plannedLocal.toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    }
+  } catch (e) {
+    /* keep original */
+  }
 
   return (
     <Provider>
@@ -345,7 +434,6 @@ export default function TakeMedicationModal() {
                 overflow: 'hidden',
               }}
             >
-              {/* Animated Header */}
               <Animated.View style={{ opacity: headerOpacity }}>
                 <View style={{ 
                   flexDirection: 'row', 
@@ -375,7 +463,6 @@ export default function TakeMedicationModal() {
                         {medication.name}
                       </Text>
                     </View>
-                    
                     <View style={{ 
                       flexDirection: 'row', 
                       alignItems: 'center', 
@@ -392,7 +479,6 @@ export default function TakeMedicationModal() {
                       </Text>
                     </View>
                   </View>
-                  
                   <TouchableOpacity 
                     onPress={handleDelete} 
                     activeOpacity={0.7}
@@ -404,7 +490,6 @@ export default function TakeMedicationModal() {
                       backgroundColor: isSyncing ? '#333' : '#4A3AFF',
                       justifyContent: 'center',
                       alignItems: 'center',
-                      transform: [{ scale: isSyncing ? 0.95 : 1 }],
                     }}
                   >
                     <Icon 
@@ -416,7 +501,6 @@ export default function TakeMedicationModal() {
                 </View>
               </Animated.View>
 
-              {/* Animated Content */}
               <Animated.View style={{ opacity: contentOpacity }}>
                 {medication.instructions && (
                   <View style={{ 
@@ -449,7 +533,6 @@ export default function TakeMedicationModal() {
                   </View>
                 )}
 
-                {/* Animated Buttons */}
                 <View style={{ 
                   flexDirection: 'row', 
                   justifyContent: 'space-between',
@@ -463,7 +546,6 @@ export default function TakeMedicationModal() {
                     disabled={isSyncing}
                     loading={isSyncing && actionStatus?.type === 'skipped'}
                   />
-                  
                   <AnimatedButton
                     onPress={handleMarkAsTaken}
                     color="#34D399"
@@ -472,7 +554,6 @@ export default function TakeMedicationModal() {
                     disabled={isSyncing}
                     loading={isSyncing && actionStatus?.type === 'taken'}
                   />
-                  
                   <AnimatedButton
                     onPress={handleCancel}
                     color="#4A3AFF"
@@ -482,7 +563,6 @@ export default function TakeMedicationModal() {
                   />
                 </View>
 
-                {/* ✅ Animated Confirmation */}
                 {actionStatus && (
                   <Animated.View
                     style={{
@@ -525,7 +605,6 @@ export default function TakeMedicationModal() {
                         fontSize: 18,
                         fontWeight: '700',
                         textAlign: 'center',
-                        lineHeight: 24,
                       }}>
                         {actionStatus.type === 'taken' 
                           ? `✅ Принято в ${actionStatus.time}` 
@@ -543,7 +622,7 @@ export default function TakeMedicationModal() {
   );
 }
 
-// Компонент анимированной кнопки
+// Анимированная кнопка
 const AnimatedButton = ({ 
   onPress, 
   color, 
@@ -560,7 +639,6 @@ const AnimatedButton = ({
   loading?: boolean;
 }) => {
   const scale = useRef(new Animated.Value(1)).current;
-  const opacity = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
     if (disabled) return;
@@ -599,7 +677,6 @@ const AnimatedButton = ({
       <Animated.View
         style={{
           transform: [{ scale }],
-          opacity,
           height: 72,
           backgroundColor: disabled ? '#333' : color,
           justifyContent: 'center',

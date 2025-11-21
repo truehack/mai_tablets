@@ -1,5 +1,5 @@
 // app/tabs/profile/add.tsx
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -29,7 +29,7 @@ import apiClient from '@/services/api';
 import { useRouter } from 'expo-router';
 import { saveMedFriend, removeMedFriend } from '@/database';
 
-// 🎨 MAI Tablets — кастомная палитра (можно вынести в theme позже)
+// 🎨 MAI Tablets — кастомная палитра
 const MAI_COLORS = {
   primary: '#4A3AFF',
   primaryLight: '#7D70FF',
@@ -55,17 +55,74 @@ type FriendStatus =
   | { type: 'patient'; friendName: string }
   | { type: 'friend'; patientName: string };
 
+// ✅ ScannerComponent — вынесен НА УРОВЕНЬ МОДУЛЯ
+const ScannerComponent = React.memo((
+  { onScanSuccess, onScanError }: { 
+    onScanSuccess: (code: string) => void; 
+    onScanError: (message: string) => void; 
+  }
+) => {
+  const Scanner = React.useMemo(() => {
+    try {
+      const { BarCodeScanner } = require('expo-barcode-scanner');
+      return BarCodeScanner;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const handleBarCodeScanned = useCallback(({ data }: { data: string }) => {
+    try {
+      const parsed = JSON.parse(data);
+      if (
+        parsed?.type === 'med_friend_invitation' &&
+        typeof parsed.code === 'string' &&
+        /^\d{6}$/.test(parsed.code)
+      ) {
+        onScanSuccess(parsed.code);
+      } else {
+        throw new Error();
+      }
+    } catch {
+      onScanError(
+        'Код должен быть сгенерирован в MAI Tablets.\nУбедитесь, что это QR приглашения мед-друга.'
+      );
+    }
+  }, [onScanSuccess, onScanError]);
+
+  if (!Scanner) {
+    return (
+      <View style={StyleSheet.absoluteFill}>
+        <Text style={styles.scanError}>❌ Сканер не загружен</Text>
+      </View>
+    );
+  }
+
+  return (
+    <Scanner
+      onBarCodeScanned={handleBarCodeScanned}
+      barCodeTypes={[Scanner.Constants.BarCodeType.qr]}
+      style={StyleSheet.absoluteFill}
+    />
+  );
+});
+
 export default function AddMedFriend() {
   const theme = useTheme();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isTablet = width >= 768;
 
+  // ✅ ВСЕ ХУКИ — ТОЛЬКО НА ВЕРХНЕМ УРОВНЕ
   const opacityAnim = useRef(new Animated.Value(0)).current;
   const inputScale = useRef(new Animated.Value(1)).current;
   const qrPulseAnim = useRef(new Animated.Value(1)).current;
 
-  // ✅ Все хуки — на верхнем уровне
+  // ✅ Добавлены rowDelay* на верхнем уровне (ранее были внутри if)
+  const rowDelay1 = useRef(new Animated.Value(0));
+  const rowDelay2 = useRef(new Animated.Value(0));
+  const rowDelay3 = useRef(new Animated.Value(0));
+
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
@@ -81,7 +138,6 @@ export default function AddMedFriend() {
     checkExistingRelation();
   }, []);
 
-  // Обновление UUID при изменении статуса
   useEffect(() => {
     if (status.type === 'patient' || status.type === 'friend') {
       fetchRelationUuid();
@@ -90,37 +146,51 @@ export default function AddMedFriend() {
     }
   }, [status.type]);
 
-  // Анимация появления + slide-up
+  // ✅ Анимация stagger — запускается при изменении status.type на 'patient'/'friend'
+  useEffect(() => {
+    if (status.type === 'patient' || status.type === 'friend') {
+      // Сбросить анимации
+      rowDelay1.current.setValue(0);
+      rowDelay2.current.setValue(0);
+      rowDelay3.current.setValue(0);
+
+      Animated.stagger(120, [
+        Animated.timing(rowDelay1.current, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(rowDelay2.current, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(rowDelay3.current, { toValue: 1, duration: 300, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [status.type]);
+
   useEffect(() => {
     Animated.parallel([
       Animated.timing(opacityAnim, {
         toValue: 1,
-        duration: 350,
+        duration: 400,
         useNativeDriver: true,
       }),
       Animated.spring(inputScale, {
         toValue: 1,
-        friction: 6,
-        tension: 100,
+        friction: 7,
+        tension: 120,
         useNativeDriver: true,
       }),
     ]).start();
   }, []);
 
-  // Пульсация QR-кнопки (акцент на главном CTA)
   useEffect(() => {
     let pulseId: Animated.CompositeAnimation | undefined;
     if (!scanning && !scannerLoading) {
       pulseId = Animated.loop(
         Animated.sequence([
           Animated.timing(qrPulseAnim, {
-            toValue: 1.08,
-            duration: 600,
+            toValue: 1.06,
+            duration: 800,
             useNativeDriver: true,
           }),
           Animated.timing(qrPulseAnim, {
             toValue: 1,
-            duration: 600,
+            duration: 800,
             useNativeDriver: true,
           }),
         ])
@@ -163,8 +233,9 @@ export default function AddMedFriend() {
     }
   };
 
-  // 🔒 Изолированная загрузка сканера (fallback на сборку)
   const loadAndStartScanner = async () => {
+    Keyboard.dismiss();
+
     if (Platform.OS === 'web') {
       Alert.alert('Веб-версия', 'Сканирование QR недоступно в браузере.');
       return;
@@ -172,18 +243,15 @@ export default function AddMedFriend() {
 
     setScannerLoading(true);
     try {
-      const getScanner = new Function(`
-        try {
-          const { BarCodeScanner } = require('expo-barcode-scanner');
-          return BarCodeScanner;
-        } catch (e) {
-          throw new Error('native_module_missing');
-        }
-      `);
-      const BarCodeScanner = getScanner();
+      let BarCodeScanner;
+      try {
+        BarCodeScanner = require('expo-barcode-scanner').BarCodeScanner;
+      } catch (e) {
+        throw new Error('native_module_missing');
+      }
 
-      const { status } = await BarCodeScanner.requestPermissionsAsync();
-      if (status !== 'granted') {
+      const { status: permStatus } = await BarCodeScanner.requestPermissionsAsync();
+      if (permStatus !== 'granted') {
         Alert.alert('Доступ к камере', 'Пожалуйста, разрешите доступ к камере в настройках.');
         setScannerLoading(false);
         return;
@@ -201,28 +269,6 @@ export default function AddMedFriend() {
       } else {
         Alert.alert('Ошибка', err.message || 'Неизвестная ошибка инициализации камеры');
       }
-    }
-  };
-
-  const handleBarCodeScanned = ({ data }: { data: string }) => {
-    setScanning(false);
-    try {
-      const parsed = JSON.parse(data);
-      if (
-        parsed?.type === 'med_friend_invitation' &&
-        typeof parsed.code === 'string' &&
-        /^\d{6}$/.test(parsed.code)
-      ) {
-        setCode(parsed.code);
-        triggerSuccess('✨✅ Код получен из QR');
-      } else {
-        throw new Error();
-      }
-    } catch {
-      Alert.alert(
-        'Неверный QR-код',
-        'Код должен быть сгенерирован в MAI Tablets.\nУбедитесь, что это QR приглашения мед-друга.'
-      );
     }
   };
 
@@ -246,7 +292,7 @@ export default function AddMedFriend() {
         throw new Error(message || 'Неизвестная ошибка сервера');
       }
 
-      triggerSuccess('✨✅ Мед-друг добавлен!');
+      triggerSuccess('✅ Мед-друг добавлен!');
       
       const medFriendRes = await apiClient.getWithAuth('/friends/get-med-friend');
       if (medFriendRes.uuid) {
@@ -287,13 +333,15 @@ export default function AddMedFriend() {
 
               triggerSuccess(
                 status.type === 'patient'
-                  ? '✨✅ Мед-друг удалён'
-                  : '✨✅ Отписка успешна'
+                  ? '✅ Мед-друг удалён'
+                  : '✅ Отписка успешна'
               );
 
-              setStatus({ type: 'none' });
-              setRelationUuid(null);
-              setTimeout(() => router.back(), 1200);
+              setTimeout(() => {
+                setStatus({ type: 'none' });
+                setRelationUuid(null);
+                router.back();
+              }, 1000);
             } catch (err: any) {
               const msg = err.message || 'Ошибка удаления';
               triggerError(msg);
@@ -317,44 +365,27 @@ export default function AddMedFriend() {
     setSnackbarType('error');
     setSnackbarVisible(true);
     Animated.sequence([
-      Animated.timing(inputScale, { toValue: 0.94, duration: 60, useNativeDriver: true }),
-      Animated.timing(inputScale, { toValue: 1.03, duration: 50, useNativeDriver: true }),
-      Animated.spring(inputScale, { toValue: 1, friction: 5, tension: 200, useNativeDriver: true }),
+      Animated.timing(inputScale, { toValue: 0.94, duration: 70, useNativeDriver: true }),
+      Animated.timing(inputScale, { toValue: 1.04, duration: 60, useNativeDriver: true }),
+      Animated.spring(inputScale, { toValue: 1, friction: 6, tension: 220, useNativeDriver: true }),
     ]).start();
   };
 
-  // ✅ Экран сканирования (профессиональный UI)
+  // ✅ РАННИЕ ВОЗВРАТЫ ПОСЛЕ ВСЕХ ХУКОВ — теперь безопасны
   if (scanning) {
-    const ScannerComponent = React.memo(() => {
-      const Scanner = React.useMemo(() => {
-        try {
-          const { BarCodeScanner } = require('expo-barcode-scanner');
-          return BarCodeScanner;
-        } catch {
-          return null;
-        }
-      }, []);
-
-      if (!Scanner) {
-        return (
-          <View style={StyleSheet.absoluteFill}>
-            <Text style={styles.scanError}>❌ Сканер не загружен</Text>
-          </View>
-        );
-      }
-
-      return (
-        <Scanner
-          onBarCodeScanned={handleBarCodeScanned}
-          barCodeTypes={[Scanner.Constants.BarCodeType.qr]}
-          style={StyleSheet.absoluteFill}
-        />
-      );
-    });
-
     return (
       <Screen style={styles.container}>
-        <ScannerComponent />
+        <ScannerComponent
+          onScanSuccess={(scannedCode) => {
+            setCode(scannedCode);
+            setScanning(false);
+            triggerSuccess('✅ Код получен из QR');
+          }}
+          onScanError={(message) => {
+            setScanning(false);
+            Alert.alert('Неверный QR-код', message);
+          }}
+        />
         <View style={styles.overlay}>
           <AppBar
             title="Сканирование QR"
@@ -374,8 +405,8 @@ export default function AddMedFriend() {
                     styles.scanLine,
                     {
                       top: qrPulseAnim.interpolate({
-                        inputRange: [1, 1.08],
-                        outputRange: [20, 200],
+                        inputRange: [1, 1.06],
+                        outputRange: [30, 210],
                       }),
                     },
                   ]}
@@ -396,12 +427,11 @@ export default function AddMedFriend() {
     );
   }
 
-  // ✅ UI: мед-друг/пациент уже добавлен
   if (status.type === 'patient' || status.type === 'friend') {
     const isPatient = status.type === 'patient';
     const name = isPatient ? status.friendName : status.patientName;
 
-    const title = isPatient ? '✨✅ Мед-друг подключён!' : '✨✅ Пациент подключён!';
+    const title = isPatient ? '✅ Мед-друг подключён!' : '✅ Пациент подключён!';
     const subtitle = isPatient
       ? `Теперь вы видите лекарства и напоминания ${name}.`
       : `Теперь вы получаете уведомления о приёме ${name}.`;
@@ -414,8 +444,8 @@ export default function AddMedFriend() {
             {
               opacity: opacityAnim,
               transform: [
-                { scale: inputScale },
-                { translateY: opacityAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) },
+                { scale: opacityAnim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) },
+                { translateY: opacityAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
               ],
             },
           ]}
@@ -424,48 +454,54 @@ export default function AddMedFriend() {
 
           <View style={styles.successContent}>
             <View style={styles.iconCircleSuccess}>
-              <Text style={styles.iconSuccess}>✨✅</Text>
+              <Text style={styles.iconSuccess}>{isPatient ? '🧑‍⚕️' : '🧑'}</Text>
             </View>
 
             <Text style={styles.titleSuccess}>{title}</Text>
             <Text style={styles.subtitleSuccess}>{subtitle}</Text>
 
             <Card style={styles.successCard} elevation={3}>
-              <View style={styles.successRow}>
-                <Text style={styles.successLabel}>
-                  {isPatient ? '🧑‍⚕️ Мед-друг:' : '🧑 Пациент:'}
-                </Text>
-                <Text style={styles.successValue}>{name}</Text>
-              </View>
-              <View style={styles.successRow}>
-                <Text style={styles.successLabel}>📅 Подключён:</Text>
-                <Text style={styles.successValue}>
-                  {new Date().toLocaleDateString('ru-RU')}
-                </Text>
-              </View>
-              {relationUuid && (
+              <Animated.View style={{ opacity: rowDelay1.current }}>
                 <View style={styles.successRow}>
-                  <Text style={styles.successLabel}>🔗 UUID:</Text>
-                  <TouchableOpacity
-                    onPress={async () => {
-                      await Clipboard.setStringAsync(relationUuid);
-                      triggerSuccess('🔗 UUID скопирован!');
-                    }}
-                    activeOpacity={0.8}
-                    style={styles.uuidTouchable}
-                  >
-                    <Text style={styles.successUuid} selectable suppressHighlighting>
-                      {relationUuid}
-                    </Text>
-                  </TouchableOpacity>
+                  <Text style={styles.successLabel}>
+                    {isPatient ? '🧑‍⚕️ Мед-друг:' : '🧑 Пациент:'}
+                  </Text>
+                  <Text style={styles.successValue}>{name}</Text>
                 </View>
+              </Animated.View>
+              <Animated.View style={{ opacity: rowDelay2.current, marginTop: 8 }}>
+                <View style={styles.successRow}>
+                  <Text style={styles.successLabel}>📅 Подключён:</Text>
+                  <Text style={styles.successValue}>
+                    {new Date().toLocaleDateString('ru-RU')}
+                  </Text>
+                </View>
+              </Animated.View>
+              {relationUuid && (
+                <Animated.View style={{ opacity: rowDelay3.current, marginTop: 8 }}>
+                  <View style={styles.successRow}>
+                    <Text style={styles.successLabel}>🔗 UUID:</Text>
+                    <TouchableOpacity
+                      onPress={async () => {
+                        await Clipboard.setStringAsync(relationUuid);
+                        triggerSuccess('✅ UUID скопирован!');
+                      }}
+                      activeOpacity={0.85}
+                      style={styles.uuidTouchable}
+                    >
+                      <Text style={styles.successUuid} selectable suppressHighlighting>
+                        {relationUuid}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </Animated.View>
               )}
             </Card>
 
             <Button
               mode="contained"
               disabled
-              style={[styles.greenButton, { marginBottom: 12 }]}
+              style={[styles.greenButton, { marginBottom: 16 }]}
               labelStyle={{ fontWeight: '600', color: '#FFFFFF' }}
             >
               🎉 Всё готово!
@@ -499,14 +535,14 @@ export default function AddMedFriend() {
         <Snackbar
           visible={snackbarVisible}
           onDismiss={() => setSnackbarVisible(false)}
-          duration={2500}
+          duration={2200}
           style={[
             styles.snackbar,
             {
               backgroundColor:
                 snackbarType === 'success'
-                  ? `${MAI_COLORS.success}20`
-                  : `${MAI_COLORS.error}20`,
+                  ? `${MAI_COLORS.success}18`
+                  : `${MAI_COLORS.error}18`,
             },
           ]}
           action={{
@@ -514,6 +550,7 @@ export default function AddMedFriend() {
             onPress: () => setSnackbarVisible(false),
             labelStyle: {
               color: snackbarType === 'success' ? MAI_COLORS.success : MAI_COLORS.error,
+              fontWeight: '600',
             },
           }}
         >
@@ -530,7 +567,13 @@ export default function AddMedFriend() {
     );
   }
 
-  // ✅ Основной UI: ввод кода
+  const getMainIcon = () => {
+    if (status.type === 'none') return '🤝';
+    if (status.type === 'patient') return '🧑‍⚕️';
+    if (status.type === 'friend') return '🧑';
+    return '🤝';
+  };
+
   return (
     <Screen style={styles.container}>
       <Animated.View
@@ -540,7 +583,7 @@ export default function AddMedFriend() {
             opacity: opacityAnim,
             transform: [
               { scale: inputScale },
-              { translateY: opacityAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) },
+              { translateY: opacityAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
             ],
           },
         ]}
@@ -554,7 +597,7 @@ export default function AddMedFriend() {
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View style={styles.content}>
               <View style={styles.iconCircle}>
-                <Text style={styles.icon}>🤝</Text>
+                <Text style={styles.icon}>{getMainIcon()}</Text>
               </View>
 
               <Text style={styles.title}>Код приглашения</Text>
@@ -595,9 +638,18 @@ export default function AddMedFriend() {
                       icon="qrcode-scan"
                       size={38}
                       onPress={loadAndStartScanner}
+                      onPressIn={() => inputScale.setValue(0.94)}
+                      onPressOut={() =>
+                        Animated.spring(inputScale, {
+                          toValue: 1,
+                          friction: 7,
+                          tension: 120,
+                          useNativeDriver: true,
+                        }).start()
+                      }
                       style={styles.qrButton}
                       iconColor="#FFFFFF"
-                      containerColor={`rgba(74, 58, 255, 0.3)`}
+                      containerColor={`rgba(74, 58, 255, 0.25)`}
                       disabled={scannerLoading}
                     />
                   </Animated.View>
@@ -619,14 +671,14 @@ export default function AddMedFriend() {
               {scannerLoading && (
                 <View style={styles.loadingIndicator}>
                   <ActivityIndicator color={MAI_COLORS.primary} />
-                  <Text style={styles.loadingText}>Загрузка сканера...</Text>
+                  <Text style={styles.loadingText}>Загрузка сканера…</Text>
                 </View>
               )}
 
               <Card style={styles.infoCard} elevation={1}>
-                <Text style={styles.hint}>⏰ Код действителен 3 минуты</Text>
+                <Text style={styles.hint}>⏳ Код живёт 3 минуты</Text>
                 <Text style={[styles.hint, { marginTop: 4 }]}>
-                  💡 После подключения вы увидите лекарства и напоминания
+                  📲 После подключения — лекарства и напоминания в реальном времени
                 </Text>
               </Card>
             </View>
@@ -636,14 +688,14 @@ export default function AddMedFriend() {
         <Snackbar
           visible={snackbarVisible}
           onDismiss={() => setSnackbarVisible(false)}
-          duration={2500}
+          duration={2200}
           style={[
             styles.snackbar,
             {
               backgroundColor:
                 snackbarType === 'success'
-                  ? `${MAI_COLORS.success}20`
-                  : `${MAI_COLORS.error}20`,
+                  ? `${MAI_COLORS.success}18`
+                  : `${MAI_COLORS.error}18`,
             },
           ]}
           action={{
@@ -651,6 +703,7 @@ export default function AddMedFriend() {
             onPress: () => setSnackbarVisible(false),
             labelStyle: {
               color: snackbarType === 'success' ? MAI_COLORS.success : MAI_COLORS.error,
+              fontWeight: '600',
             },
           }}
         >
@@ -679,6 +732,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 24,
+    alignSelf: 'center',
+    width: '100%',
   },
   successContainer: {
     flex: 1,
@@ -688,12 +743,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 24,
+    alignSelf: 'center',
+    width: '100%',
   },
   iconCircle: {
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: `rgba(${parseInt(MAI_COLORS.primary.slice(1, 3), 16)}, ${parseInt(MAI_COLORS.primary.slice(3, 5), 16)}, ${parseInt(MAI_COLORS.primary.slice(5, 7), 16)}, 0.15)`,
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: `rgba(${parseInt(MAI_COLORS.primary.slice(1, 3), 16)}, ${parseInt(MAI_COLORS.primary.slice(3, 5), 16)}, ${parseInt(MAI_COLORS.primary.slice(5, 7), 16)}, 0.2)`,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
@@ -771,15 +830,16 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderRadius: 12,
   },
-  // ✅ Стили успеха
   iconCircleSuccess: {
     width: 76,
     height: 76,
     borderRadius: 38,
-    backgroundColor: `rgba(${parseInt(MAI_COLORS.success.slice(1, 3), 16)}, ${parseInt(MAI_COLORS.success.slice(3, 5), 16)}, ${parseInt(MAI_COLORS.success.slice(5, 7), 16)}, 0.15)`,
+    borderWidth: 2,
+    borderColor: `${MAI_COLORS.success}40`,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
+    backgroundColor: 'transparent',
   },
   iconSuccess: {
     fontSize: 34,
@@ -811,7 +871,6 @@ const styles = StyleSheet.create({
   successRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
     alignItems: 'center',
   },
   successLabel: {
@@ -854,7 +913,6 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 320,
   },
-  // ✅ Сканер
   overlay: {
     flex: 1,
   },
@@ -926,7 +984,7 @@ const styles = StyleSheet.create({
     height: 2,
     backgroundColor: MAI_COLORS.primary,
     borderRadius: 1,
-    opacity: 0.8,
+    opacity: 0.85,
   },
   scanInfo: {
     paddingBottom: 60,
@@ -934,7 +992,7 @@ const styles = StyleSheet.create({
   },
   scanCard: {
     padding: 18,
-    backgroundColor: 'rgba(26, 26, 26, 0.85)',
+    backgroundColor: 'rgba(26, 26, 26, 0.88)',
     borderRadius: 16,
     marginHorizontal: 24,
     alignItems: 'center',

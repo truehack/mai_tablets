@@ -1,4 +1,5 @@
 // app/(tabs)/schedule.tsx
+
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { 
   View, 
@@ -8,7 +9,8 @@ import {
   Animated, 
   LayoutAnimation, 
   UIManager,
-  Dimensions
+  Dimensions,
+  Platform
 } from 'react-native';
 import { Text, Card, FAB, Icon, useTheme } from 'react-native-paper';
 import { useFocusEffect } from '@react-navigation/native';
@@ -18,7 +20,7 @@ import { useDatabase, Medication, IntakeHistory } from '@/hooks/use-database';
 import apiClient from '@/services/api';
 
 // Включаем LayoutAnimation для Android
-if (UIManager.setLayoutAnimationEnabledExperimental) {
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
@@ -94,7 +96,12 @@ export default function Schedule() {
       Alert.alert('Ошибка', 'Не удалось загрузить лекарства');
     } finally {
       setLoading(false);
-      Animated.timing(itemsOpacity, { toValue: 1, duration: 400, delay: 100, useNativeDriver: true }).start();
+      Animated.timing(itemsOpacity, { 
+        toValue: 1, 
+        duration: 400, 
+        delay: 100, 
+        useNativeDriver: true 
+      }).start();
     }
   }, [getMedications, isMedFriendMode]);
 
@@ -126,7 +133,11 @@ export default function Schedule() {
     useCallback(() => {
       loadMeds();
       loadHistory();
-      Animated.timing(headerOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      Animated.timing(headerOpacity, { 
+        toValue: 1, 
+        duration: 300, 
+        useNativeDriver: true 
+      }).start();
     }, [loadMeds, loadHistory])
   );
 
@@ -147,14 +158,18 @@ export default function Schedule() {
           setIsMedFriendMode(newMode);
         } catch {
           setIsMedFriendMode(false);
-          Animated.timing(modeIndicatorOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+          Animated.timing(modeIndicatorOpacity, { 
+            toValue: 0, 
+            duration: 300, 
+            useNativeDriver: true 
+          }).start();
         }
       };
       checkMode();
     }, [isMedFriendMode])
   );
 
-  // 🔴🟠✅ Ключевое исправление: логика статусов и цветов
+  // 🔴🟠✅ Основная логика статусов (сохранена и уточнена)
   const getIntakeStatusWithTime = (medicationId: number, date: Date) => {
     const dateStr = date.toISOString().split('T')[0];
     const dayIntakes = intakeHistory.filter(
@@ -163,7 +178,7 @@ export default function Schedule() {
         intake.datetime.startsWith(dateStr)
     );
 
-    // 🔴 Не принято (нет записи или запись без статуса)
+    // 🔴 Не принято (нет записи)
     if (dayIntakes.length === 0) {
       return { status: 'pending', time: null, color: '#FF3B30' };
     }
@@ -187,18 +202,16 @@ export default function Schedule() {
       return { status: 'skipped', time, color: '#FF9500' };
     }
 
-    // 🔴 Не принято (запись есть, но не taken и не skipped — например, только planned)
+    // 🔴 Не принято (есть запись, но не marked)
     return { status: 'pending', time, color: '#FF3B30' };
   };
 
-  // ✅ Важно: дата строго для выбранного дня (без смещений)
   const getDateForDay = (dayIndex: number) => {
     const date = new Date(currentWeekStart);
     date.setDate(currentWeekStart.getDate() + dayIndex);
     return date;
   };
 
-  // Получение статуса дня целиком (для календаря)
   const getDayStatus = (dayIndex: number) => {
     const date = getDateForDay(dayIndex);
     const dateStr = date.toISOString().split('T')[0];
@@ -217,29 +230,52 @@ export default function Schedule() {
     return 'unknown';
   };
 
+  // ✅ Сохранена оригинальная логика isMedForSelectedDay (с проверкой start_date/end_date + all schedule types)
   const isMedForSelectedDay = (med: Medication, day: string) => {
     if (!med.start_date) return false;
     const start = new Date(med.start_date);
     if (isNaN(start.getTime())) return false;
 
-    const targetDate = getDateForDay(days.indexOf(day));
-    if (targetDate < start) return false;
+    // ✅ Проверяем, что выбранный день >= даты начала (включительно)
+    const selectedDate = getDateForDay(days.indexOf(day)); // день, на который ты смотришь
+    const startDay = start.toISOString().split('T')[0];
+    const selectedDayStr = selectedDate.toISOString().split('T')[0];
 
-    if (med.schedule_type === 'daily') return true;
+    if (selectedDayStr < startDay) return false;
+
+    // ✅ Проверяем, что дата окончания не раньше, чем выбранный день (включительно)
+    if (med.end_date) {
+      const end = new Date(med.end_date); // строка в формате YYYY-MM-DD
+      const endDay = end.toISOString().split('T')[0];
+
+      // Если выбранный день > даты окончания — не показываем
+      if (selectedDayStr > endDay) return false;
+    }
+
+    if (med.schedule_type === 'daily') {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      const startStr = start.toISOString().split('T')[0];
+      return startStr <= todayStr;
+    }
 
     if (med.schedule_type === 'weekly_days' && med.weekly_days) {
       try {
         const daysList = typeof med.weekly_days === 'string' ? JSON.parse(med.weekly_days) : med.weekly_days;
-        return Array.isArray(daysList) && daysList.includes(day);
+        if (Array.isArray(daysList)) {
+          return daysList.includes(day);
+        }
       } catch {
         return false;
       }
     }
 
-    if (med.schedule_type === 'every_x_days' && med.interval_days) {
+    if (med.schedule_type === 'every_x_days' && med.start_date && med.interval_days) {
+      const targetDate = getDateForDay(days.indexOf(day));
       const diffMs = targetDate.getTime() - start.getTime();
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      return diffDays >= 0 && diffDays % med.interval_days === 0;
+      if (diffDays < 0) return false;
+      return diffDays % med.interval_days === 0;
     }
 
     return false;
@@ -295,7 +331,11 @@ export default function Schedule() {
   const canModify = !isMedFriendMode;
 
   useEffect(() => {
-    Animated.timing(fabScale, { toValue: canModify ? 1 : 0, duration: 300, useNativeDriver: true }).start();
+    Animated.timing(fabScale, { 
+      toValue: canModify ? 1 : 0, 
+      duration: 300, 
+      useNativeDriver: true 
+    }).start();
   }, [canModify]);
 
   // === Анимированная карточка лекарства ===
@@ -305,8 +345,19 @@ export default function Schedule() {
 
     useEffect(() => {
       Animated.parallel([
-        Animated.spring(scaleAnim, { toValue: 1, friction: 6, tension: 100, delay: index * 50, useNativeDriver: true }),
-        Animated.timing(opacityAnim, { toValue: 1, duration: 300, delay: index * 50, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { 
+          toValue: 1, 
+          friction: 6, 
+          tension: 100, 
+          delay: index * 50, 
+          useNativeDriver: true 
+        }),
+        Animated.timing(opacityAnim, { 
+          toValue: 1, 
+          duration: 300, 
+          delay: index * 50, 
+          useNativeDriver: true 
+        }),
       ]).start();
     }, [index]);
 

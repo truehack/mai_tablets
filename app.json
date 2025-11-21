@@ -10,7 +10,8 @@
     "newArchEnabled": true,
     "platforms": [
       "ios",
-      "android"
+      "android",
+      "web"
     ],
     "ios": {
       "supportsTablet": true
@@ -30,6 +31,9 @@
       "favicon": "./assets/images/favicon.png",
       "build": {
         "enabled": false
+      },
+      "experimental": {
+        "wasm": true   // ← ← ← ОБЯЗАТЕЛЬНО ДОБАВЬТЕ ЭТО
       }
     },
     "plugins": [

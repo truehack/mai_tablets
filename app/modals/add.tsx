@@ -1,9 +1,9 @@
 // app/modals/add.tsx
+
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { 
   View, 
   TouchableOpacity, 
-  Alert, 
   Animated, 
   LayoutAnimation, 
   UIManager,
@@ -35,7 +35,7 @@ if (UIManager.setLayoutAnimationEnabledExperimental) {
 
 const daysOfWeek = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
 
-// ✅ ФИКС ЧАСОВОГО ПОЯСА — универсальная функция (копия из notifications.tsx)
+// ✅ ФИКС ЧАСОВОГО ПОЯСА — универсальная функция
 const localDateToUtcTimestamp = (localDate: Date): number => {
   return Date.UTC(
     localDate.getFullYear(),
@@ -48,7 +48,7 @@ const localDateToUtcTimestamp = (localDate: Date): number => {
   );
 };
 
-// ✅ ПОЛНОСТЬЮ ПЕРЕПИСАНА: надёжная логика планирования (локальное время → UTC timestamp)
+// ✅ ПОЛНОСТЬЮ СОВМЕСТИМ С 1-М ФАЙЛОМ: 10 уведомлений для every_x_days + –1d в БД
 async function scheduleMedicationNotification(
   name: string,
   form: string,
@@ -56,126 +56,128 @@ async function scheduleMedicationNotification(
   scheduleType: Medication["schedule_type"],
   weeklyDays?: string[],
   intervalDays?: number,
-  startDate?: string
+  startDate?: string // ← ожидается оригинальная дата (без –1d)
 ) {
   const [hour, minute] = time.split(":").map(Number);
-  if (isNaN(hour) || isNaN(minute)) return;
+  if (isNaN(hour) || isNaN(minute)) {
+    console.log(`⏰ Ошибка: время ${time} некорректно`);
+    return;
+  }
+
+  // Вычисляем время уведомления: за 10 минут до приёма
+  let notificationHour = hour;
+  let notificationMinute = minute - 10;
+
+  if (notificationMinute < 0) {
+    notificationMinute += 60;
+    notificationHour -= 1;
+    if (notificationHour < 0) {
+      notificationHour = 23;
+    }
+  }
 
   const now = new Date();
 
-  // Вспомогательная функция: создаёт дату с 00:00:00.000 локального времени
-  const startOfDay = (d: Date): Date => {
-    const clean = new Date(d);
-    clean.setHours(0, 0, 0, 0);
-    return clean;
-  };
+  if (scheduleType === 'daily') {
+    const triggerTime = new Date();
+    triggerTime.setHours(notificationHour);
+    triggerTime.setMinutes(notificationMinute);
+    triggerTime.setSeconds(0);
 
-  if (scheduleType === "daily") {
-    // === ЕЖЕДНЕВНО ===
-    const today = startOfDay(now);
-    const intakeTime = new Date(today);
-    intakeTime.setHours(hour, minute, 0, 0);
-
-    const notificationTime = new Date(intakeTime);
-    notificationTime.setMinutes(minute - 10);
-
-    // Если приём сегодня уже прошёл — переносим на завтра
-    if (intakeTime <= now) {
-      intakeTime.setDate(intakeTime.getDate() + 1);
-      notificationTime.setDate(notificationTime.getDate() + 1);
+    if (triggerTime <= now) {
+      triggerTime.setDate(triggerTime.getDate() + 1);
     }
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: `💊 ${name}`,
-        body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
-        sound: true,
-        priority: Notifications.AndroidNotificationPriority.HIGH,
-        color: "#4A3AFF",
-      },
-      trigger: { 
-        date: localDateToUtcTimestamp(notificationTime) // ✅ ФИКС
-      },
-    });
-
-  } else if (scheduleType === "weekly_days" && weeklyDays) {
-    // === ПО ДНЯМ НЕДЕЛИ ===
-    const today = startOfDay(now);
-    const currentDayIndex = now.getDay(); // 0=ВС, 1=ПН, ..., 6=СБ
-    const dayIndexMap: Record<string, number> = {
-      "ВС": 0, "ПН": 1, "ВТ": 2, "СР": 3, "ЧТ": 4, "ПТ": 5, "СБ": 6
-    };
-
-    for (const dayAbbr of weeklyDays) {
-      const targetIndex = dayIndexMap[dayAbbr];
-      if (targetIndex === undefined) continue;
-
-      let daysToAdd = (targetIndex - currentDayIndex + 7) % 7;
-      let candidateDate = new Date(today);
-      candidateDate.setDate(today.getDate() + daysToAdd);
-
-      const intakeTime = new Date(candidateDate);
-      intakeTime.setHours(hour, minute, 0, 0);
-
-      if (daysToAdd === 0 && intakeTime <= now) {
-        intakeTime.setDate(intakeTime.getDate() + 7);
-      }
-
-      const notificationTime = new Date(intakeTime);
-      notificationTime.setMinutes(minute - 10);
-
+    try {
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: `💊 ${name}`,
+          title: `💊 Скоро приём: ${name}`,
           body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
           sound: true,
           priority: Notifications.AndroidNotificationPriority.HIGH,
           color: "#4A3AFF",
         },
-        trigger: { 
-          date: localDateToUtcTimestamp(notificationTime) // ✅ ФИКС
-        },
+        trigger: { date: localDateToUtcTimestamp(triggerTime) },
       });
+      console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
+    } catch (e) {
+      console.error(`❌ Ошибка при планировании уведомления для ${name}:`, e);
     }
+  } 
+  else if (scheduleType === 'weekly_days' && weeklyDays) {
+    for (const day of weeklyDays) {
+      const triggerTime = new Date();
+      triggerTime.setHours(notificationHour);
+      triggerTime.setMinutes(notificationMinute);
+      triggerTime.setSeconds(0);
 
-  } else if (scheduleType === "every_x_days" && intervalDays && startDate) {
-    // === КАЖДЫЕ X ДНЕЙ ===
-    const start = startOfDay(new Date(startDate));
-    const today = startOfDay(now);
+      if (triggerTime <= now) {
+        triggerTime.setDate(triggerTime.getDate() + 1);
+      }
 
+      try {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `💊 Скоро приём: ${name}`,
+            body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+            sound: true,
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+            color: "#4A3AFF",
+          },
+          trigger: { date: localDateToUtcTimestamp(triggerTime) },
+        });
+        console.log(`⏰ Уведомление запланировано для ${name} на ${day} в ${triggerTime}`);
+      } catch (e) {
+        console.error(`❌ Ошибка при планировании уведомления для ${name} на ${day}:`, e);
+      }
+    }
+  } 
+  else if (scheduleType === 'every_x_days' && intervalDays && startDate) {
+    const start = new Date(startDate);
+    const today = new Date();
     const diffMs = today.getTime() - start.getTime();
-    const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-    let nextOffset = ((-diffDays) % intervalDays + intervalDays) % intervalDays;
-    let nextDate = new Date(today);
-    nextDate.setDate(today.getDate() + nextOffset);
+    let nextDayOffset = intervalDays - (diffDays % intervalDays);
+    if (nextDayOffset === intervalDays) nextDayOffset = 0;
 
-    const intakeTime = new Date(nextDate);
-    intakeTime.setHours(hour, minute, 0, 0);
+    const nextDate = new Date(today);
+    nextDate.setDate(today.getDate() + nextDayOffset);
 
-    if (nextOffset === 0 && intakeTime <= now) {
-      intakeTime.setDate(intakeTime.getDate() + intervalDays);
+    let current = new Date(nextDate);
+    for (let i = 0; i < 10; i++) {
+      const triggerTime = new Date(current);
+      triggerTime.setHours(notificationHour);
+      triggerTime.setMinutes(notificationMinute);
+      triggerTime.setSeconds(0);
+
+      const now = new Date();
+      if (triggerTime <= now) {
+        triggerTime.setDate(triggerTime.getDate() + 1);
+      }
+
+      try {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: `💊 Скоро приём: ${name}`,
+            body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
+            sound: true,
+            priority: Notifications.AndroidNotificationPriority.HIGH,
+            color: "#4A3AFF",
+          },
+          trigger: { date: localDateToUtcTimestamp(triggerTime) },
+        });
+        console.log(`⏰ Уведомление запланировано для ${name} на ${triggerTime}`);
+      } catch (e) {
+        console.error(`❌ Ошибка при планировании уведомления для ${name} на ${triggerTime}:`, e);
+      }
+
+      current.setDate(current.getDate() + intervalDays);
     }
-
-    const notificationTime = new Date(intakeTime);
-    notificationTime.setMinutes(minute - 10);
-
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: `💊 ${name}`,
-        body: `Через 10 минут нужно принять ${form || "лекарство"} в ${time}`,
-        sound: true,
-        priority: Notifications.AndroidNotificationPriority.HIGH,
-        color: "#4A3AFF",
-      },
-      trigger: { 
-        date: localDateToUtcTimestamp(notificationTime) // ✅ ФИКС
-      },
-    });
   }
 }
 
-// 🔁 Маппинг: "ПН" → 1, "ВТ" → 2, ..., "ВС" → 7
+// 🔁 Маппинг: "ПН" → 1, ..., "ВС" → 7
 const mapDayToNumber = (day: string): number => {
   const map: Record<string, number> = {
     "ПН": 1, "ВТ": 2, "СР": 3, "ЧТ": 4, "ПТ": 5, "СБ": 6, "ВС": 7
@@ -199,23 +201,33 @@ const formatDateString = (value: string): string => {
   return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)}`;
 };
 
-// ✅ Валидация даты
+// ✅ Валидация даты ДД.ММ.ГГГГ (без строгой проверки)
 const validateDate = (dateStr: string): boolean => {
-  if (!dateStr) return true;
+  if (!dateStr) return false;
   const regex = /^(\d{2})\.(\d{2})\.(\d{4})$/;
-  const match = dateStr.match(regex);
-  if (!match) return false;
+  if (!regex.test(dateStr)) return false;
 
-  const [, dd, mm, yyyy] = match;
-  const day = parseInt(dd, 10);
-  const month = parseInt(mm, 10);
-  const year = parseInt(yyyy, 10);
+  const parts = dateStr.split('.');
+  if (parts.length !== 3) return false;
 
-  return (
-    day >= 1 && day <= 31 &&
-    month >= 1 && month <= 12 &&
-    year >= 1900 && year <= 2100
-  );
+  const [day, month, year] = parts.map(Number);
+  if (isNaN(day) || isNaN(month) || isNaN(year)) return false;
+
+  return day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 1900 && year <= 2100;
+};
+
+// ✅ Валидация времени HH:MM
+const validateTime = (time: string): boolean => {
+  if (!time) return false;
+  const regex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+  return regex.test(time.trim());
+};
+
+// ✅ Валидация интервала (число от 1 до 30)
+const validateInterval = (str: string): boolean => {
+  if (!str) return false;
+  const num = parseInt(str, 10);
+  return !isNaN(num) && num >= 1 && num <= 30;
 };
 
 export default function Add() {
@@ -233,19 +245,27 @@ export default function Add() {
   const [name, setName] = useState("");
   const [form, setForm] = useState<Medication["form"]>("tablet");
   const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [endDate, setEndDate] = useState(""); // ✅ необязательное
   const [scheduleType, setScheduleType] = useState<Medication["schedule_type"]>("daily");
   const [timesList, setTimesList] = useState("");
   const [instructions, setInstructions] = useState("");
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
   const [intervalDays, setIntervalDays] = useState("");
 
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  // ✅ Ошибки — точно как в 1-м файле
+  const [nameError, setNameError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [startDateError, setStartDateError] = useState("");
+  const [endDateError, setEndDateError] = useState("");
+  const [scheduleTypeError, setScheduleTypeError] = useState("");
+  const [timesListError, setTimesListError] = useState("");
+  const [intervalDaysError, setIntervalDaysError] = useState("");
+  const [selectedDaysError, setSelectedDaysError] = useState("");
 
   const startDateRef = useRef<TextInput>(null);
   const endDateRef = useRef<TextInput>(null);
 
-  // Анимация появления при монтировании
+  // Анимация появления
   useEffect(() => {
     Animated.parallel([
       Animated.timing(formOpacity, {
@@ -262,37 +282,81 @@ export default function Add() {
     ]).start();
   }, []);
 
+  // ✅ Валидация — ТОЧНО КАК В 1-М ФАЙЛЕ
   const validate = () => {
-    const err: Record<string, string> = {};
+    setNameError("");
+    setFormError("");
+    setStartDateError("");
+    setEndDateError("");
+    setScheduleTypeError("");
+    setTimesListError("");
+    setIntervalDaysError("");
+    setSelectedDaysError("");
 
-    if (!name.trim()) err.name = "Обязательно";
-    if (!startDate) err.startDate = "Обязательно";
-    if (startDate && !validateDate(startDate)) err.startDate = "Формат: ДД.ММ.ГГГГ";
-    if (endDate && !validateDate(endDate)) err.endDate = "Формат: ДД.ММ.ГГГГ";
+    let hasErrors = false;
 
-    const times = timesList.split(",").map(t => t.trim());
-    for (const t of times) {
-      if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(t)) {
-        err.times = `Неверное время: ${t}`;
-        break;
+    if (!name) {
+      setNameError("Поле обязательно");
+      hasErrors = true;
+    }
+
+    if (!form) {
+      setFormError("Поле обязательно");
+      hasErrors = true;
+    }
+
+    if (!startDate) {
+      setStartDateError("Поле обязательно");
+      hasErrors = true;
+    } else if (!validateDate(startDate)) {
+      setStartDateError("Формат: ДД.ММ.ГГГГ, например 13.11.2025");
+      hasErrors = true;
+    }
+
+    // ✅ endDate — НЕОБЯЗАТЕЛЬНОЕ, но если введено — проверяем
+    if (endDate && !validateDate(endDate)) {
+      setEndDateError("Формат: ДД.ММ.ГГГГ, например 13.11.2025");
+      hasErrors = true;
+    }
+
+    if (!scheduleType) {
+      setScheduleTypeError("Поле обязательно");
+      hasErrors = true;
+    }
+
+    if (!timesList) {
+      setTimesListError("Поле обязательно");
+      hasErrors = true;
+    } else {
+      const times = timesList.split(",").map(t => t.trim());
+      for (const time of times) {
+        if (!validateTime(time)) {
+          setTimesListError(`Неверный формат времени: ${time}. Используйте ЧЧ:ММ`);
+          hasErrors = true;
+          break;
+        }
       }
     }
 
     if (scheduleType === "every_x_days") {
-      const num = parseInt(intervalDays);
-      if (!intervalDays || isNaN(num) || num < 1 || num > 30) {
-        err.interval = "1–30 дней";
+      if (!intervalDays) {
+        setIntervalDaysError("Поле обязательно");
+        hasErrors = true;
+      } else if (!validateInterval(intervalDays)) {
+        setIntervalDaysError("Введите число от 1 до 30");
+        hasErrors = true;
       }
     }
 
     if (scheduleType === "weekly_days" && selectedDays.length === 0) {
-      err.weekly = "Выберите дни";
+      setSelectedDaysError("Выберите хотя бы один день");
+      hasErrors = true;
     }
 
-    setErrors(err);
-    return Object.keys(err).length === 0;
+    return !hasErrors;
   };
 
+  // ✅ ИСПРАВЛЕННЫЙ handleAdd — корректная обработка endDate
   const handleAdd = useCallback(async () => {
     if (!validate()) return;
 
@@ -304,40 +368,66 @@ export default function Add() {
 
     Keyboard.dismiss();
 
-    const convertDate = (dateStr: string): string | null => {
-      if (!dateStr) return null;
-      const [dd, mm, yyyy] = dateStr.split(".").map(Number);
-      return `${yyyy}-${mm.toString().padStart(2, "0")}-${dd.toString().padStart(2, "0")}`;
-    };
+    // --- Парсинг startDate (обязательная) ---
+    let convertedStartDate: string;
+    try {
+      const parts = startDate.split('.');
+      if (parts.length !== 3) throw new Error("Invalid format");
+      const [dd, mm, yyyy] = parts.map(Number);
+      if (isNaN(dd) || isNaN(mm) || isNaN(yyyy)) throw new Error("NaN parts");
+      convertedStartDate = `${yyyy}-${mm.toString().padStart(2, '0')}-${dd.toString().padStart(2, '0')}`;
+    } catch (e) {
+      console.error("❌ Ошибка парсинга startDate:", startDate, e);
+      setSnackbarMessage('Некорректная дата начала');
+      setSnackbarType('error');
+      setSnackbarVisible(true);
+      return;
+    }
 
-    const originalStartDate = convertDate(startDate)!;
-
-    // ✅ Дата на 1 день РАНЬШЕ — для сохранения в БД и на сервере
+    // ✅ СМЕЩЕНИЕ –1 ДЕНЬ для БД и сервера
     const startDateMinus1d = (() => {
-      const d = new Date(originalStartDate);
+      const d = new Date(convertedStartDate);
+      if (isNaN(d.getTime())) {
+        throw new Error("Invalid date");
+      }
       d.setDate(d.getDate() - 1);
-      return d.toISOString().split('T')[0]; // "YYYY-MM-DD"
+      return d.toISOString().split('T')[0];
     })();
 
-    const isoEndDate = convertDate(endDate);
-
-    const med: Medication = {
-      name,
-      form,
-      instructions: instructions || null,
-      start_date: startDateMinus1d, // ← ← ← день назад в БД
-      end_date: isoEndDate,
-      schedule_type: scheduleType,
-      weekly_days: scheduleType === "weekly_days" ? selectedDays : null,
-      interval_days: scheduleType === "every_x_days" ? parseInt(intervalDays) : null,
-      times_list: timesList.split(",").map(t => t.trim()),
-    };
+    // --- Парсинг endDate (необязательная) ---
+    let convertedEndDate: string | null = null;
+    if (endDate.trim()) {
+      try {
+        const parts = endDate.split('.');
+        if (parts.length !== 3) throw new Error("Invalid format");
+        const [dd, mm, yyyy] = parts.map(Number);
+        if (isNaN(dd) || isNaN(mm) || isNaN(yyyy)) throw new Error("NaN parts");
+        convertedEndDate = `${yyyy}-${mm.toString().padStart(2, '0')}-${dd.toString().padStart(2, '0')}`;
+      } catch (e) {
+        console.error("❌ Ошибка парсинга endDate:", endDate, e);
+        setSnackbarMessage('Некорректная дата окончания');
+        setSnackbarType('error');
+        setSnackbarVisible(true);
+        return;
+      }
+    }
 
     try {
-      const localId = await addMedication(med);
-      console.log("✅ Лекарство сохранено локально, id:", localId);
+      const med: Medication = {
+        name,
+        form,
+        instructions: instructions || null,
+        start_date: startDateMinus1d,   // ← –1 день
+        end_date: convertedEndDate,     // ← null или строка
+        schedule_type: scheduleType,
+        weekly_days: scheduleType === "weekly_days" ? selectedDays : null,
+        interval_days: scheduleType === "every_x_days" ? parseInt(intervalDays, 10) : null,
+        times_list: timesList.split(",").map((t) => t.trim()),
+      };
 
-      // ✅ Планируем уведомления — по ОРИГИНАЛЬНОЙ дате!
+      const localId = await addMedication(med);
+
+      // ✅ Уведомления — по оригинальной startDate (без смещения!)
       for (const time of med.times_list) {
         await scheduleMedicationNotification(
           med.name,
@@ -346,30 +436,35 @@ export default function Add() {
           med.schedule_type,
           med.weekly_days,
           med.interval_days,
-          originalStartDate // ← ← ← оригинальная дата!
+          convertedStartDate // ← важно: оригинальная дата
         );
       }
 
-      // Отправка на сервер
+      // ——— СИНХРОНИЗАЦИЯ С СЕРВЕРОМ ———
       try {
         const user = await getLocalUser();
         if (!user) throw new Error("Пользователь не авторизован");
 
-        const serverPayload = {
+        const serverPayload: Record<string, any> = {
           name: med.name,
           form: med.form,
           instructions: med.instructions,
-          start_date: med.start_date, // ← ← ← startDateMinus1d
-          end_date: med.end_date,
+          start_date: med.start_date, // ← –1 день
           schedule_type: med.schedule_type,
-          week_days: med.schedule_type === "weekly_days"
-            ? selectedDays.map(mapDayToNumber)
-            : undefined,
-          interval_days: med.schedule_type === "every_x_days"
-            ? med.interval_days
-            : undefined,
           times_per_day: med.times_list.map(formatTimeForServer),
         };
+
+        // ✅ Передаём end_date ТОЛЬКО если есть
+        if (convertedEndDate) {
+          serverPayload.end_date = convertedEndDate;
+        }
+
+        // ✅ Доп. поля по типу расписания
+        if (med.schedule_type === "weekly_days" && med.weekly_days) {
+          serverPayload.week_days = med.weekly_days.map(mapDayToNumber);
+        } else if (med.schedule_type === "every_x_days" && med.interval_days) {
+          serverPayload.interval_days = med.interval_days;
+        }
 
         const serverResponse = await apiClient.postWithAuth(
           "/medicines/add_medication",
@@ -380,7 +475,7 @@ export default function Add() {
           await updateMedicationServerId(localId, serverResponse.id);
         }
 
-        setSnackbarMessage('✅ Лекарство добавлено и синхронизировано!');
+        setSnackbarMessage('✅ Медикамент добавлен и уведомления запланированы!');
         setSnackbarType('success');
         setSnackbarVisible(true);
 
@@ -413,7 +508,7 @@ export default function Add() {
 
     } catch (e: any) {
       console.error("❌ Ошибка добавления:", e);
-      setSnackbarMessage(e.message || 'Не удалось добавить лекарство');
+      setSnackbarMessage(e.message || 'Не удалось добавить медикамент');
       setSnackbarType('error');
       setSnackbarVisible(true);
     }
@@ -425,6 +520,12 @@ export default function Add() {
 
   const [formVisible, setFormVisible] = useState(false);
   const [scheduleVisible, setScheduleVisible] = useState(false);
+
+  const toggleDay = (day: string) => {
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+    );
+  };
 
   const AnimatedDayButton = ({ day, isSelected }: { day: string; isSelected: boolean }) => {
     const scale = useRef(new Animated.Value(isSelected ? 1.1 : 1)).current;
@@ -443,9 +544,7 @@ export default function Add() {
     return (
       <Animated.View style={{ transform: [{ scale }] }}>
         <TouchableOpacity
-          onPress={() => setSelectedDays(prev =>
-            prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
-          )}
+          onPress={() => toggleDay(day)}
           activeOpacity={0.8}
         >
           <View style={{
@@ -474,274 +573,282 @@ export default function Add() {
   };
 
   return (
-  <KeyboardAvoidingView
-    style={{ flex: 1, backgroundColor: '#121212' }}
-    behavior={Platform.OS === "ios" ? "padding" : undefined}
-    keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}
-  >
-    <ScrollView
-      contentContainerStyle={{ flexGrow: 1 }}
-      keyboardShouldPersistTaps="handled"
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: '#121212' }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}
     >
-      <Screen style={{ flex: 1, padding: 20, backgroundColor: '#121212' }}>
-        <Animated.View
-          style={{
-            flex: 1,
-            opacity: formOpacity,
-            transform: [{ translateY: contentTranslateY }],
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}>
-            <View style={{
-              width: 40,
-              height: 40,
-              borderRadius: 20,
-              backgroundColor: 'rgba(74, 58, 255, 0.15)',
-              justifyContent: 'center',
-              alignItems: 'center',
-              marginRight: 12,
-            }}>
-              <Text style={{ fontSize: 20 }}>💊</Text>
-            </View>
-            <Text variant="headlineSmall" style={{ color: '#fff', fontWeight: '700' }}>
-              Добавить медикамент
-            </Text>
-          </View>
-
-          <View style={{ flex: 1 }}>
-            <AnimatedTextInput
-              label="Название"
-              value={name}
-              onChangeText={setName}
-              mode="outlined"
-              error={!!errors.name}
-              style={{ marginBottom: 16 }}
-              icon="pill"
-              autoFocus
-            />
-            {errors.name && <HelperText type="error">{errors.name}</HelperText>}
-
-            <Menu
-              visible={formVisible}
-              onDismiss={() => setFormVisible(false)}
-              anchor={
-                <AnimatedTextInput
-                  label="Форма"
-                  value={form === "tablet" ? "Таблетка" : form === "drop" ? "Капли" : "Спрей"}
-                  mode="outlined"
-                  editable={false}
-                  onPress={() => setFormVisible(true)}
-                  error={!!errors.form}
-                  style={{ marginBottom: 16 }}
-                  icon="cube-outline"
-                />
-              }
-            >
-              {[
-                { label: "Таблетка", value: "tablet", icon: "pill" },
-                { label: "Капли", value: "drop", icon: "water" },
-                { label: "Спрей", value: "spray", icon: "spray" },
-              ].map(item => (
-                <Menu.Item
-                  key={item.value}
-                  title={item.label}
-                  leftIcon={item.icon}
-                  onPress={() => {
-                    setForm(item.value as Medication["form"]);
-                    setFormVisible(false);
-                  }}
-                  titleStyle={{ color: '#fff' }}
-                />
-              ))}
-            </Menu>
-
-            <AnimatedTextInput
-              ref={startDateRef}
-              label="Дата начала (ДД.ММ.ГГГГ)"
-              value={startDate}
-              onChangeText={(text) => setStartDate(formatDateString(text))}
-              keyboardType="numeric"
-              maxLength={10}
-              mode="outlined"
-              error={!!errors.startDate}
-              style={{ marginBottom: 16 }}
-              icon="calendar-start"
-              onSubmitEditing={() => endDateRef.current?.focus()}
-            />
-            {errors.startDate && <HelperText type="error">{errors.startDate}</HelperText>}
-
-            <AnimatedTextInput
-              ref={endDateRef}
-              label="Дата окончания (необязательно)"
-              value={endDate}
-              onChangeText={(text) => setEndDate(formatDateString(text))}
-              keyboardType="numeric"
-              maxLength={10}
-              mode="outlined"
-              error={!!errors.endDate}
-              style={{ marginBottom: 16 }}
-              icon="calendar-end"
-            />
-            {errors.endDate && <HelperText type="error">{errors.endDate}</HelperText>}
-
-            <Menu
-              visible={scheduleVisible}
-              onDismiss={() => setScheduleVisible(false)}
-              anchor={
-                <AnimatedTextInput
-                  label="Расписание"
-                  value={
-                    scheduleType === "daily" ? "Ежедневно" :
-                    scheduleType === "weekly_days" ? "По дням недели" : "Каждые X дней"
-                  }
-                  mode="outlined"
-                  editable={false}
-                  onPress={() => setScheduleVisible(true)}
-                  error={!!errors.schedule}
-                  style={{ marginBottom: 16 }}
-                  icon="clock-outline"
-                />
-              }
-            >
-              {[
-                { label: "Ежедневно", value: "daily", icon: "calendar-month" },
-                { label: "По дням недели", value: "weekly_days", icon: "calendar-week" },
-                { label: "Каждые X дней", value: "every_x_days", icon: "calendar-sync" },
-              ].map(item => (
-                <Menu.Item
-                  key={item.value}
-                  title={item.label}
-                  leftIcon={item.icon}
-                  onPress={() => {
-                    setScheduleType(item.value as Medication["schedule_type"]);
-                    setScheduleVisible(false);
-                  }}
-                  titleStyle={{ color: '#fff' }}
-                />
-              ))}
-            </Menu>
-
-            {scheduleType === "every_x_days" && (
-              <>
-                <AnimatedTextInput
-                  label="Интервал (дней)"
-                  value={intervalDays}
-                  onChangeText={setIntervalDays}
-                  keyboardType="numeric"
-                  mode="outlined"
-                  error={!!errors.interval}
-                  style={{ marginBottom: 16 }}
-                  icon="numeric"
-                />
-                {errors.interval && <HelperText type="error">{errors.interval}</HelperText>}
-              </>
-            )}
-
-            {scheduleType === "weekly_days" && (
-              <View style={{ 
-                flexDirection: "row", 
-                justifyContent: "space-between", 
-                marginBottom: 20,
-                backgroundColor: 'rgba(30, 41, 59, 0.4)',
-                padding: 16,
-                borderRadius: 14,
-              }}>
-                {daysOfWeek.map(day => (
-                  <AnimatedDayButton 
-                    key={day} 
-                    day={day} 
-                    isSelected={selectedDays.includes(day)} 
-                  />
-                ))}
-              </View>
-            )}
-
-            <AnimatedTextInput
-              label="Время приёма (08:00, 20:00)"
-              value={timesList}
-              onChangeText={setTimesList}
-              mode="outlined"
-              error={!!errors.times}
-              style={{ marginBottom: 20 }}
-              icon="clock-time-four-outline"
-              multiline
-            />
-            {errors.times && <HelperText type="error">{errors.times}</HelperText>}
-
-            <AnimatedTextInput
-              label="Инструкции"
-              value={instructions}
-              onChangeText={setInstructions}
-              mode="outlined"
-              multiline
-              numberOfLines={3}
-              style={{ marginBottom: 28 }}
-              icon="note-text-outline"
-            />
-
-            <Animated.View style={{ alignItems: 'center' }}>
-              <TouchableOpacity
-                onPress={handleAdd}
-                activeOpacity={0.8}
-                disabled={Object.keys(errors).length > 0}
-              >
-                <Animated.View
-                  style={{
-                    backgroundColor: Object.keys(errors).length > 0 ? '#323232' : '#4A3AFF',
-                    paddingHorizontal: 24,
-                    paddingVertical: 14,
-                    borderRadius: 16,
-                    shadowColor: '#4A3AFF',
-                    shadowOffset: { width: 0, height: 4 },
-                    shadowOpacity: 0.3,
-                    shadowRadius: 8,
-                    elevation: 4,
-                  }}
-                >
-                  <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>
-                    Добавить
-                  </Text>
-                </Animated.View>
-              </TouchableOpacity>
-            </Animated.View>
-          </View>
-        </Animated.View>
-
-        <Snackbar
-          visible={snackbarVisible}
-          onDismiss={() => setSnackbarVisible(false)}
-          duration={2500}
-          style={{
-            backgroundColor:
-              snackbarType === 'success'
-                ? '#252D25'
-                : snackbarType === 'warning'
-                ? '#2D2B25'
-                : '#2D2525',
-            marginBottom: 20,
-          }}
-        >
-          <Text
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Screen style={{ flex: 1, padding: 20, backgroundColor: '#121212' }}>
+          <Animated.View
             style={{
-              color:
-                snackbarType === 'success'
-                  ? '#6EE7B7'
-                  : snackbarType === 'warning'
-                  ? '#FBBF24'
-                  : '#FCA5A5',
-              fontWeight: '500',
+              flex: 1,
+              opacity: formOpacity,
+              transform: [{ translateY: contentTranslateY }],
             }}
           >
-            {snackbarMessage}
-          </Text>
-        </Snackbar>
-      </Screen>
-    </ScrollView>
-  </KeyboardAvoidingView>
-);
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}>
+              <View style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: 'rgba(74, 58, 255, 0.15)',
+                justifyContent: 'center',
+                alignItems: 'center',
+                marginRight: 12,
+              }}>
+                <Text style={{ fontSize: 20 }}>💊</Text>
+              </View>
+              <Text variant="headlineSmall" style={{ color: '#fff', fontWeight: '700' }}>
+                Добавить медикамент
+              </Text>
+            </View>
 
+            <View style={{ flex: 1 }}>
+              <AnimatedTextInput
+                label="Название"
+                value={name}
+                onChangeText={setName}
+                mode="outlined"
+                error={!!nameError}
+                style={{ marginBottom: 8 }}
+                icon="pill"
+                autoFocus
+              />
+              {nameError ? <HelperText type="error">{nameError}</HelperText> : null}
+
+              <Menu
+                visible={formVisible}
+                onDismiss={() => setFormVisible(false)}
+                anchor={
+                  <AnimatedTextInput
+                    label="Форма"
+                    value={
+                      form === "tablet" ? "Таблетка" :
+                      form === "drop" ? "Капли" :
+                      form === "spray" ? "Спрей" : "Другое"
+                    }
+                    mode="outlined"
+                    editable={false}
+                    onPress={() => setFormVisible(true)}
+                    error={!!formError}
+                    style={{ marginBottom: 8 }}
+                    icon="cube-outline"
+                  />
+                }
+              >
+                {[
+                  { label: "Таблетка", value: "tablet", icon: "pill" },
+                  { label: "Капли", value: "drop", icon: "water" },
+                  { label: "Спрей", value: "spray", icon: "spray" },
+                ].map(item => (
+                  <Menu.Item
+                    key={item.value}
+                    title={item.label}
+                    leftIcon={item.icon}
+                    onPress={() => {
+                      setForm(item.value as Medication["form"]);
+                      setFormVisible(false);
+                    }}
+                    titleStyle={{ color: '#fff' }}
+                  />
+                ))}
+              </Menu>
+              {formError ? <HelperText type="error">{formError}</HelperText> : null}
+
+              <AnimatedTextInput
+                ref={startDateRef}
+                label="Дата начала (ДД.ММ.ГГГГ)"
+                value={startDate}
+                onChangeText={(text) => setStartDate(formatDateString(text))}
+                keyboardType="numeric"
+                maxLength={10}
+                mode="outlined"
+                error={!!startDateError}
+                style={{ marginBottom: 8 }}
+                icon="calendar-start"
+                onSubmitEditing={() => endDateRef.current?.focus()}
+              />
+              {startDateError ? <HelperText type="error">{startDateError}</HelperText> : null}
+
+              {/* ✅ endDate — НЕОБЯЗАТЕЛЬНОЕ */}
+              <AnimatedTextInput
+                ref={endDateRef}
+                label="Дата окончания (ДД.ММ.ГГГГ, по желанию)"
+                value={endDate}
+                onChangeText={(text) => setEndDate(formatDateString(text))}
+                keyboardType="numeric"
+                maxLength={10}
+                mode="outlined"
+                error={!!endDateError}
+                style={{ marginBottom: 8 }}
+                icon="calendar-end"
+              />
+              {endDateError ? <HelperText type="error">{endDateError}</HelperText> : null}
+
+              <Menu
+                visible={scheduleVisible}
+                onDismiss={() => setScheduleVisible(false)}
+                anchor={
+                  <AnimatedTextInput
+                    label="Тип расписания"
+                    value={
+                      scheduleType === "daily" ? "Ежедневно" :
+                      scheduleType === "weekly_days" ? "По дням недели" :
+                      "Каждые X дней"
+                    }
+                    mode="outlined"
+                    editable={false}
+                    onPress={() => setScheduleVisible(true)}
+                    error={!!scheduleTypeError}
+                    style={{ marginBottom: 8 }}
+                    icon="clock-outline"
+                  />
+                }
+              >
+                {[
+                  { label: "Ежедневно", value: "daily", icon: "calendar-month" },
+                  { label: "По дням недели", value: "weekly_days", icon: "calendar-week" },
+                  { label: "Каждые X дней", value: "every_x_days", icon: "calendar-sync" },
+                ].map(item => (
+                  <Menu.Item
+                    key={item.value}
+                    title={item.label}
+                    leftIcon={item.icon}
+                    onPress={() => {
+                      setScheduleType(item.value as Medication["schedule_type"]);
+                      setScheduleVisible(false);
+                    }}
+                    titleStyle={{ color: '#fff' }}
+                  />
+                ))}
+              </Menu>
+              {scheduleTypeError ? <HelperText type="error">{scheduleTypeError}</HelperText> : null}
+
+              {scheduleType === "every_x_days" && (
+                <>
+                  <AnimatedTextInput
+                    label="Каждые X дней"
+                    value={intervalDays}
+                    onChangeText={setIntervalDays}
+                    mode="outlined"
+                    keyboardType="numeric"
+                    error={!!intervalDaysError}
+                    style={{ marginBottom: 8 }}
+                    icon="numeric"
+                  />
+                  {intervalDaysError ? <HelperText type="error">{intervalDaysError}</HelperText> : null}
+                </>
+              )}
+
+              {scheduleType === "weekly_days" && (
+                <View style={{ 
+                  flexDirection: "row", 
+                  justifyContent: "space-between", 
+                  marginBottom: 12,
+                  backgroundColor: 'rgba(30, 41, 59, 0.4)',
+                  padding: 16,
+                  borderRadius: 14,
+                }}>
+                  {daysOfWeek.map(day => (
+                    <AnimatedDayButton 
+                      key={day} 
+                      day={day} 
+                      isSelected={selectedDays.includes(day)} 
+                    />
+                  ))}
+                </View>
+              )}
+              {selectedDaysError ? <HelperText type="error">{selectedDaysError}</HelperText> : null}
+
+              <AnimatedTextInput
+                label="Время приёма (08:00, 20:00)"
+                value={timesList}
+                onChangeText={setTimesList}
+                mode="outlined"
+                error={!!timesListError}
+                style={{ marginBottom: 8 }}
+                icon="clock-time-four-outline"
+                multiline
+              />
+              {timesListError ? <HelperText type="error">{timesListError}</HelperText> : null}
+
+              <AnimatedTextInput
+                label="Инструкции (по желанию)"
+                value={instructions}
+                onChangeText={setInstructions}
+                mode="outlined"
+                multiline
+                numberOfLines={3}
+                style={{ marginBottom: 16 }}
+                icon="note-text-outline"
+              />
+
+              <Animated.View style={{ alignItems: 'center' }}>
+                <TouchableOpacity
+                  onPress={handleAdd}
+                  activeOpacity={0.8}
+                >
+                  <Animated.View
+                    style={{
+                      backgroundColor: '#4A3AFF',
+                      paddingHorizontal: 24,
+                      paddingVertical: 14,
+                      borderRadius: 16,
+                      shadowColor: '#4A3AFF',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.3,
+                      shadowRadius: 8,
+                      elevation: 4,
+                    }}
+                  >
+                    <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>
+                      Добавить
+                    </Text>
+                  </Animated.View>
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+          </Animated.View>
+
+          <Snackbar
+            visible={snackbarVisible}
+            onDismiss={() => setSnackbarVisible(false)}
+            duration={2500}
+            style={{
+              backgroundColor:
+                snackbarType === 'success'
+                  ? '#252D25'
+                  : snackbarType === 'warning'
+                  ? '#2D2B25'
+                  : '#2D2525',
+              marginBottom: 20,
+            }}
+          >
+            <Text
+              style={{
+                color:
+                  snackbarType === 'success'
+                    ? '#6EE7B7'
+                    : snackbarType === 'warning'
+                    ? '#FBBF24'
+                    : '#FCA5A5',
+                fontWeight: '500',
+              }}
+            >
+              {snackbarMessage}
+            </Text>
+          </Snackbar>
+        </Screen>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
 }
 
+// Компонент AnimatedTextInput — с иконками и анимацией
 const AnimatedTextInput = React.forwardRef(({ 
   label, 
   value, 
