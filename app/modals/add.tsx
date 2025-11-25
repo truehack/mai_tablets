@@ -1,6 +1,6 @@
-// app/modals/add.tsx
+// app/modals/add.tsx — ИСПРАВЛЕННАЯ ВЕРСИЯ
 
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, forwardRef } from "react";
 import { 
   View, 
   TouchableOpacity, 
@@ -10,7 +10,11 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   ScrollView,
-  Platform 
+  Platform,
+  SafeAreaView,
+  findNodeHandle,
+  UIManager as RNUIManager,
+  NativeMethods,
 } from "react-native";
 import {
   Button,
@@ -19,7 +23,8 @@ import {
   Menu,
   HelperText,
   useTheme,
-  Snackbar
+  Snackbar,
+  Portal,
 } from "react-native-paper";
 import { Screen } from "@/components/screen";
 import { useNavigation } from "@react-navigation/native";
@@ -27,6 +32,7 @@ import { useDatabase, Medication } from "@/hooks/use-database";
 import * as Notifications from "expo-notifications";
 import apiClient from "@/services/api";
 import { getLocalUser } from "@/services/localUser.service";
+import * as Haptics from "expo-haptics";
 
 // Включаем LayoutAnimation для Android
 if (UIManager.setLayoutAnimationEnabledExperimental) {
@@ -230,6 +236,92 @@ const validateInterval = (str: string): boolean => {
   return !isNaN(num) && num >= 1 && num <= 30;
 };
 
+// ✅ Кастомный MenuItem (для красивых меню)
+const MenuItem = React.memo(({ 
+  label, 
+  leftIcon, 
+  isSelected = false, 
+  onPress, 
+  testID 
+}: { 
+  label: string; 
+  leftIcon: string; 
+  isSelected?: boolean; 
+  onPress: () => void; 
+  testID?: string;
+}) => {
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.parallel([
+      Animated.spring(scale, { toValue: 0.96, friction: 6, tension: 150, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0.85, duration: 100, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.parallel([
+      Animated.spring(scale, { toValue: 1, friction: 6, tension: 150, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onPress();
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={handlePress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      style={{ 
+        flexDirection: 'row', 
+        alignItems: 'center', 
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        backgroundColor: isSelected ? 'rgba(74, 58, 255, 0.15)' : 'transparent',
+        borderRadius: 12,
+        marginHorizontal: 8,
+      }}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      testID={testID}
+    >
+      <View style={{ 
+        width: 24, 
+        height: 24, 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        marginRight: 12,
+      }}>
+        <TextInput.Icon 
+          icon={leftIcon} 
+          color={isSelected ? '#4A3AFF' : '#aaa'} 
+          size={20} 
+        />
+      </View>
+      <Text 
+        style={{ 
+          color: '#fff', 
+          fontSize: 16, 
+          fontWeight: isSelected ? '600' : '500',
+        }}
+      >
+        {label}
+      </Text>
+      {isSelected && (
+        <View style={{ marginLeft: 'auto' }}>
+          <TextInput.Icon icon="check" color="#4A3AFF" size={20} />
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+});
+
 export default function Add() {
   const { addMedication, updateMedicationServerId } = useDatabase();
   const navigation = useNavigation();
@@ -264,6 +356,18 @@ export default function Add() {
 
   const startDateRef = useRef<TextInput>(null);
   const endDateRef = useRef<TextInput>(null);
+
+  // 🔑 Рефы для anchor элементов
+  const formAnchorRef = useRef<View>(null);
+  const scheduleAnchorRef = useRef<View>(null);
+
+  // 🔑 Позиции для Menu
+  const [formMenuPosition, setFormMenuPosition] = useState<{ x: number; y: number; } | null>(null);
+  const [scheduleMenuPosition, setScheduleMenuPosition] = useState<{ x: number; y: number; } | null>(null);
+
+  // Для предотвращения мерцания меню до измерения
+  const [formReady, setFormReady] = useState(false);
+  const [scheduleReady, setScheduleReady] = useState(false);
 
   // Анимация появления
   useEffect(() => {
@@ -518,6 +622,23 @@ export default function Add() {
     addMedication, updateMedicationServerId, navigation
   ]);
 
+  // 🔑 Функция измерения позиции anchor
+  const measureAnchor = useCallback((ref: React.RefObject<View>, setPosition: (pos: { x: number; y: number }) => void, setReady: (ready: boolean) => void) => {
+    if (!ref.current) {
+      setReady(false);
+      return;
+    }
+    const nodeHandle = findNodeHandle(ref.current);
+    if (nodeHandle && RNUIManager) {
+      RNUIManager.measure(nodeHandle, (x, y, width, height, pageX, pageY) => {
+        setPosition({ x: pageX, y: pageY + height });
+        setReady(true);
+      });
+    } else {
+      setReady(false);
+    }
+  }, []);
+
   const [formVisible, setFormVisible] = useState(false);
   const [scheduleVisible, setScheduleVisible] = useState(false);
 
@@ -529,8 +650,6 @@ export default function Add() {
 
   const AnimatedDayButton = ({ day, isSelected }: { day: string; isSelected: boolean }) => {
     const scale = useRef(new Animated.Value(isSelected ? 1.1 : 1)).current;
-    const backgroundColor = isSelected ? '#4A3AFF' : '#2D2D2D';
-    const textColor = isSelected ? 'white' : '#aaa';
 
     useEffect(() => {
       Animated.spring(scale, {
@@ -541,27 +660,37 @@ export default function Add() {
       }).start();
     }, [isSelected]);
 
+    const handlePress = () => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      toggleDay(day);
+    };
+
+    const handleLongPress = () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    };
+
     return (
       <Animated.View style={{ transform: [{ scale }] }}>
         <TouchableOpacity
-          onPress={() => toggleDay(day)}
-          activeOpacity={0.8}
+          onPress={handlePress}
+          onLongPress={handleLongPress}
+          delayLongPress={500}
+          activeOpacity={0.7}
+          style={{ marginHorizontal: 4 }}
         >
           <View style={{
             width: 44,
             height: 44,
             borderRadius: 22,
-            backgroundColor,
+            backgroundColor: isSelected ? '#4A3AFF' : '#2D2D2D',
             justifyContent: "center",
             alignItems: "center",
-            shadowColor: isSelected ? '#4A3AFF' : 'transparent',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: isSelected ? 0.3 : 0,
-            shadowRadius: 4,
+            borderWidth: isSelected ? 0 : 1,
+            borderColor: '#4A3AFF40',
           }}>
             <Text style={{ 
-              color: textColor,
-              fontWeight: '600',
+              color: isSelected ? 'white' : '#aaa',
+              fontWeight: isSelected ? '700' : '600',
               fontSize: 14,
             }}>
               {day}
@@ -573,283 +702,406 @@ export default function Add() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: '#121212' }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 100 : 0}
-    >
-      <ScrollView
-        contentContainerStyle={{ flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Screen style={{ flex: 1, padding: 20, backgroundColor: '#121212' }}>
-          <Animated.View
-            style={{
-              flex: 1,
-              opacity: formOpacity,
-              transform: [{ translateY: contentTranslateY }],
-            }}
+    // 🔑 Оборачиваем в Portal.Host — обязательно!
+    <Portal.Host>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#121212' }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
+        >
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}>
-              <View style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: 'rgba(74, 58, 255, 0.15)',
-                justifyContent: 'center',
-                alignItems: 'center',
-                marginRight: 12,
-              }}>
-                <Text style={{ fontSize: 20 }}>💊</Text>
-              </View>
-              <Text variant="headlineSmall" style={{ color: '#fff', fontWeight: '700' }}>
-                Добавить медикамент
-              </Text>
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <AnimatedTextInput
-                label="Название"
-                value={name}
-                onChangeText={setName}
-                mode="outlined"
-                error={!!nameError}
-                style={{ marginBottom: 8 }}
-                icon="pill"
-                autoFocus
-              />
-              {nameError ? <HelperText type="error">{nameError}</HelperText> : null}
-
-              <Menu
-                visible={formVisible}
-                onDismiss={() => setFormVisible(false)}
-                anchor={
-                  <AnimatedTextInput
-                    label="Форма"
-                    value={
-                      form === "tablet" ? "Таблетка" :
-                      form === "drop" ? "Капли" :
-                      form === "spray" ? "Спрей" : "Другое"
-                    }
-                    mode="outlined"
-                    editable={false}
-                    onPress={() => setFormVisible(true)}
-                    error={!!formError}
-                    style={{ marginBottom: 8 }}
-                    icon="cube-outline"
-                  />
-                }
+            <Screen style={{ flex: 1, padding: 20, backgroundColor: '#121212' }}>
+              <Animated.View
+                style={{
+                  flex: 1,
+                  opacity: formOpacity,
+                  transform: [{ translateY: contentTranslateY }],
+                }}
               >
-                {[
-                  { label: "Таблетка", value: "tablet", icon: "pill" },
-                  { label: "Капли", value: "drop", icon: "water" },
-                  { label: "Спрей", value: "spray", icon: "spray" },
-                ].map(item => (
-                  <Menu.Item
-                    key={item.value}
-                    title={item.label}
-                    leftIcon={item.icon}
-                    onPress={() => {
-                      setForm(item.value as Medication["form"]);
-                      setFormVisible(false);
-                    }}
-                    titleStyle={{ color: '#fff' }}
-                  />
-                ))}
-              </Menu>
-              {formError ? <HelperText type="error">{formError}</HelperText> : null}
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}>
+                  <View style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor: 'rgba(74, 58, 255, 0.15)',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginRight: 12,
+                  }}>
+                    <Text style={{ fontSize: 20 }}>💊</Text>
+                  </View>
+                  <Text variant="headlineSmall" style={{ color: '#fff', fontWeight: '700' }}>
+                    Добавить медикамент
+                  </Text>
+                </View>
 
-              <AnimatedTextInput
-                ref={startDateRef}
-                label="Дата начала (ДД.ММ.ГГГГ)"
-                value={startDate}
-                onChangeText={(text) => setStartDate(formatDateString(text))}
-                keyboardType="numeric"
-                maxLength={10}
-                mode="outlined"
-                error={!!startDateError}
-                style={{ marginBottom: 8 }}
-                icon="calendar-start"
-                onSubmitEditing={() => endDateRef.current?.focus()}
-              />
-              {startDateError ? <HelperText type="error">{startDateError}</HelperText> : null}
-
-              {/* ✅ endDate — НЕОБЯЗАТЕЛЬНОЕ */}
-              <AnimatedTextInput
-                ref={endDateRef}
-                label="Дата окончания (ДД.ММ.ГГГГ, по желанию)"
-                value={endDate}
-                onChangeText={(text) => setEndDate(formatDateString(text))}
-                keyboardType="numeric"
-                maxLength={10}
-                mode="outlined"
-                error={!!endDateError}
-                style={{ marginBottom: 8 }}
-                icon="calendar-end"
-              />
-              {endDateError ? <HelperText type="error">{endDateError}</HelperText> : null}
-
-              <Menu
-                visible={scheduleVisible}
-                onDismiss={() => setScheduleVisible(false)}
-                anchor={
+                <View style={{ flex: 1 }}>
                   <AnimatedTextInput
-                    label="Тип расписания"
-                    value={
-                      scheduleType === "daily" ? "Ежедневно" :
-                      scheduleType === "weekly_days" ? "По дням недели" :
-                      "Каждые X дней"
-                    }
+                    label="Название"
+                    value={name}
+                    onChangeText={setName}
                     mode="outlined"
-                    editable={false}
-                    onPress={() => setScheduleVisible(true)}
-                    error={!!scheduleTypeError}
-                    style={{ marginBottom: 8 }}
-                    icon="clock-outline"
+                    error={!!nameError}
+                    style={{ marginBottom: 12 }}
+                    icon="pill"
+                    autoFocus
                   />
-                }
-              >
-                {[
-                  { label: "Ежедневно", value: "daily", icon: "calendar-month" },
-                  { label: "По дням недели", value: "weekly_days", icon: "calendar-week" },
-                  { label: "Каждые X дней", value: "every_x_days", icon: "calendar-sync" },
-                ].map(item => (
-                  <Menu.Item
-                    key={item.value}
-                    title={item.label}
-                    leftIcon={item.icon}
-                    onPress={() => {
-                      setScheduleType(item.value as Medication["schedule_type"]);
-                      setScheduleVisible(false);
-                    }}
-                    titleStyle={{ color: '#fff' }}
-                  />
-                ))}
-              </Menu>
-              {scheduleTypeError ? <HelperText type="error">{scheduleTypeError}</HelperText> : null}
+                  {nameError ? <HelperText type="error">{nameError}</HelperText> : null}
 
-              {scheduleType === "every_x_days" && (
-                <>
+                  {/* 🔑 FORM INPUT — с onLayout */}
+                  <View 
+                    ref={formAnchorRef}
+                    onLayout={() => {
+                      if (formVisible) {
+                        measureAnchor(formAnchorRef, setFormMenuPosition, setFormReady);
+                      }
+                    }}
+                    style={{ marginBottom: 12 }}
+                  >
+                    <AnimatedTextInput
+                      label="Форма"
+                      value={
+                        form === "tablet" ? "Таблетка" :
+                        form === "drop" ? "Капли" :
+                        form === "spray" ? "Спрей" : "Другое"
+                      }
+                      mode="outlined"
+                      editable={false}
+                      onPress={() => {
+                        setFormVisible(true);
+                        setTimeout(() => measureAnchor(formAnchorRef, setFormMenuPosition, setFormReady), 50);
+                      }}
+                      error={!!formError}
+                      icon="cube-outline"
+                    />
+                  </View>
+                  {formError ? <HelperText type="error">{formError}</HelperText> : null}
+
                   <AnimatedTextInput
-                    label="Каждые X дней"
-                    value={intervalDays}
-                    onChangeText={setIntervalDays}
-                    mode="outlined"
+                    ref={startDateRef}
+                    label="Дата начала (ДД.ММ.ГГГГ)"
+                    value={startDate}
+                    onChangeText={(text) => setStartDate(formatDateString(text))}
                     keyboardType="numeric"
-                    error={!!intervalDaysError}
-                    style={{ marginBottom: 8 }}
-                    icon="numeric"
+                    maxLength={10}
+                    mode="outlined"
+                    error={!!startDateError}
+                    style={{ marginBottom: 12 }}
+                    icon="calendar-start"
+                    onSubmitEditing={() => endDateRef.current?.focus()}
                   />
-                  {intervalDaysError ? <HelperText type="error">{intervalDaysError}</HelperText> : null}
-                </>
-              )}
+                  {startDateError ? <HelperText type="error">{startDateError}</HelperText> : null}
 
-              {scheduleType === "weekly_days" && (
-                <View style={{ 
-                  flexDirection: "row", 
-                  justifyContent: "space-between", 
-                  marginBottom: 12,
-                  backgroundColor: 'rgba(30, 41, 59, 0.4)',
-                  padding: 16,
-                  borderRadius: 14,
-                }}>
-                  {daysOfWeek.map(day => (
-                    <AnimatedDayButton 
-                      key={day} 
-                      day={day} 
-                      isSelected={selectedDays.includes(day)} 
+                  {/* ✅ endDate — НЕОБЯЗАТЕЛЬНОЕ */}
+                  <AnimatedTextInput
+                    ref={endDateRef}
+                    label="Дата окончания (ДД.ММ.ГГГГ, по желанию)"
+                    value={endDate}
+                    onChangeText={(text) => setEndDate(formatDateString(text))}
+                    keyboardType="numeric"
+                    maxLength={10}
+                    mode="outlined"
+                    error={!!endDateError}
+                    style={{ marginBottom: 12 }}
+                    icon="calendar-end"
+                  />
+                  {endDateError ? <HelperText type="error">{endDateError}</HelperText> : null}
+
+                  {/* 🔑 SCHEDULE INPUT — с onLayout */}
+                  <View 
+                    ref={scheduleAnchorRef}
+                    onLayout={() => {
+                      if (scheduleVisible) {
+                        measureAnchor(scheduleAnchorRef, setScheduleMenuPosition, setScheduleReady);
+                      }
+                    }}
+                    style={{ marginBottom: 12 }}
+                  >
+                    <AnimatedTextInput
+                      label="Тип расписания"
+                      value={
+                        scheduleType === "daily" ? "Ежедневно" :
+                        scheduleType === "weekly_days" ? "По дням недели" :
+                        "Каждые X дней"
+                      }
+                      mode="outlined"
+                      editable={false}
+                      onPress={() => {
+                        setScheduleVisible(true);
+                        setTimeout(() => measureAnchor(scheduleAnchorRef, setScheduleMenuPosition, setScheduleReady), 50);
+                      }}
+                      error={!!scheduleTypeError}
+                      icon="clock-outline"
+                    />
+                  </View>
+                  {scheduleTypeError ? <HelperText type="error">{scheduleTypeError}</HelperText> : null}
+
+                  {scheduleType === "every_x_days" && (
+                    <>
+                      <AnimatedTextInput
+                        label="Каждые X дней"
+                        value={intervalDays}
+                        onChangeText={setIntervalDays}
+                        mode="outlined"
+                        keyboardType="numeric"
+                        error={!!intervalDaysError}
+                        style={{ marginBottom: 12 }}
+                        icon="numeric"
+                      />
+                      {intervalDaysError ? <HelperText type="error">{intervalDaysError}</HelperText> : null}
+                    </>
+                  )}
+
+                  {scheduleType === "weekly_days" && (
+                    <View style={{ 
+                      flexDirection: "row", 
+                      justifyContent: "space-between", 
+                      marginBottom: 16,
+                      backgroundColor: 'rgba(30, 41, 59, 0.4)',
+                      padding: 16,
+                      borderRadius: 14,
+                    }}>
+                      {daysOfWeek.map(day => (
+                        <AnimatedDayButton 
+                          key={day} 
+                          day={day} 
+                          isSelected={selectedDays.includes(day)} 
+                        />
+                      ))}
+                    </View>
+                  )}
+                  {selectedDaysError ? <HelperText type="error">{selectedDaysError}</HelperText> : null}
+
+                  <AnimatedTextInput
+                    label="Время приёма (08:00, 20:00)"
+                    value={timesList}
+                    onChangeText={setTimesList}
+                    mode="outlined"
+                    error={!!timesListError}
+                    style={{ marginBottom: 12 }}
+                    icon="clock-time-four-outline"
+                    multiline
+                  />
+                  {timesListError ? <HelperText type="error">{timesListError}</HelperText> : null}
+
+                  <AnimatedTextInput
+                    label="Инструкции (по желанию)"
+                    value={instructions}
+                    onChangeText={setInstructions}
+                    mode="outlined"
+                    multiline
+                    numberOfLines={3}
+                    style={{ marginBottom: 20 }}
+                    icon="note-text-outline"
+                  />
+
+                  <Animated.View style={{ alignItems: 'center' }}>
+                    <TouchableOpacity
+                      onPress={handleAdd}
+                      activeOpacity={0.85}
+                      style={{
+                        shadowColor: '#4A3AFF',
+                        shadowOffset: { width: 0, height: 6 },
+                        shadowOpacity: 0.4,
+                        shadowRadius: 10,
+                        elevation: 5,
+                      }}
+                    >
+                      <Animated.View
+                        style={{
+                          backgroundColor: '#4A3AFF',
+                          paddingHorizontal: 28,
+                          paddingVertical: 16,
+                          borderRadius: 18,
+                        }}
+                      >
+                        <Text style={{ 
+                          color: 'white', 
+                          fontSize: 17, 
+                          fontWeight: '700', 
+                          textAlign: 'center',
+                          letterSpacing: 0.5,
+                        }}>
+                          Добавить
+                        </Text>
+                      </Animated.View>
+                    </TouchableOpacity>
+                  </Animated.View>
+                </View>
+              </Animated.View>
+
+              <Snackbar
+                visible={snackbarVisible}
+                onDismiss={() => setSnackbarVisible(false)}
+                duration={2500}
+                style={{
+                  backgroundColor:
+                    snackbarType === 'success'
+                      ? '#252D25'
+                      : snackbarType === 'warning'
+                      ? '#2D2B25'
+                      : '#2D2525',
+                  marginBottom: 20,
+                  borderRadius: 12,
+                }}
+              >
+                <Text
+                  style={{
+                    color:
+                      snackbarType === 'success'
+                        ? '#6EE7B7'
+                        : snackbarType === 'warning'
+                        ? '#FBBF24'
+                        : '#FCA5A5',
+                    fontWeight: '600',
+                    fontSize: 15,
+                  }}
+                >
+                  {snackbarMessage}
+                </Text>
+              </Snackbar>
+            </Screen>
+          </ScrollView>
+
+          {/* 🔑 PORTAL: Меню — теперь с zIndex и задержкой */}
+          <Portal>
+
+            {/* FORM MENU */}
+            {formVisible && formMenuPosition && formReady && (
+              <View 
+                style={{
+                  position: 'absolute', 
+                  left: 0, 
+                  right: 0, 
+                  top: 0, 
+                  bottom: 0, 
+                  pointerEvents: 'none',
+                }}
+              >
+                <Menu
+                  visible={true}
+                  onDismiss={() => {
+                    setFormVisible(false);
+                    setFormMenuPosition(null);
+                    setFormReady(false);
+                  }}
+                  anchor={{ x: formMenuPosition.x, y: formMenuPosition.y }}
+                  contentStyle={{
+                    backgroundColor: '#1E1E1E',
+                    borderRadius: 16,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: '#323232',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.4,
+                    shadowRadius: 12,
+                    elevation: 12,
+                    zIndex: 9999, // ← КРИТИЧЕСКИ ВАЖНО
+                    width: 280,
+                    marginTop: 4,
+                  }}
+                  style={{
+                    zIndex: 9999,
+                  }}
+                >
+                  {[
+                    { label: "Таблетка", value: "tablet", icon: "pill" },
+                    { label: "Капли", value: "drop", icon: "water" },
+                    { label: "Спрей", value: "spray", icon: "spray" },
+                  ].map(item => (
+                    <MenuItem
+                      key={item.value}
+                      label={item.label}
+                      leftIcon={item.icon}
+                      isSelected={form === item.value}
+                      onPress={() => {
+                        setForm(item.value as Medication["form"]);
+                        setFormVisible(false);
+                        setFormMenuPosition(null);
+                        setFormReady(false);
+                      }}
                     />
                   ))}
-                </View>
-              )}
-              {selectedDaysError ? <HelperText type="error">{selectedDaysError}</HelperText> : null}
+                </Menu>
+              </View>
+            )}
 
-              <AnimatedTextInput
-                label="Время приёма (08:00, 20:00)"
-                value={timesList}
-                onChangeText={setTimesList}
-                mode="outlined"
-                error={!!timesListError}
-                style={{ marginBottom: 8 }}
-                icon="clock-time-four-outline"
-                multiline
-              />
-              {timesListError ? <HelperText type="error">{timesListError}</HelperText> : null}
-
-              <AnimatedTextInput
-                label="Инструкции (по желанию)"
-                value={instructions}
-                onChangeText={setInstructions}
-                mode="outlined"
-                multiline
-                numberOfLines={3}
-                style={{ marginBottom: 16 }}
-                icon="note-text-outline"
-              />
-
-              <Animated.View style={{ alignItems: 'center' }}>
-                <TouchableOpacity
-                  onPress={handleAdd}
-                  activeOpacity={0.8}
+            {/* SCHEDULE MENU */}
+            {scheduleVisible && scheduleMenuPosition && scheduleReady && (
+              <View 
+                style={{
+                  position: 'absolute', 
+                  left: 0, 
+                  right: 0, 
+                  top: 0, 
+                  bottom: 0, 
+                  pointerEvents: 'none',
+                }}
+              >
+                <Menu
+                  visible={true}
+                  onDismiss={() => {
+                    setScheduleVisible(false);
+                    setScheduleMenuPosition(null);
+                    setScheduleReady(false);
+                  }}
+                  anchor={{ x: scheduleMenuPosition.x, y: scheduleMenuPosition.y }}
+                  contentStyle={{
+                    backgroundColor: '#1E1E1E',
+                    borderRadius: 16,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: '#323232',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 4 },
+                    shadowOpacity: 0.4,
+                    shadowRadius: 12,
+                    elevation: 12,
+                    zIndex: 9999, // ← КРИТИЧЕСКИ ВАЖНО
+                    width: 280,
+                    marginTop: 4,
+                  }}
+                  style={{
+                    zIndex: 9999,
+                  }}
                 >
-                  <Animated.View
-                    style={{
-                      backgroundColor: '#4A3AFF',
-                      paddingHorizontal: 24,
-                      paddingVertical: 14,
-                      borderRadius: 16,
-                      shadowColor: '#4A3AFF',
-                      shadowOffset: { width: 0, height: 4 },
-                      shadowOpacity: 0.3,
-                      shadowRadius: 8,
-                      elevation: 4,
-                    }}
-                  >
-                    <Text style={{ color: 'white', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>
-                      Добавить
-                    </Text>
-                  </Animated.View>
-                </TouchableOpacity>
-              </Animated.View>
-            </View>
-          </Animated.View>
+                  {[
+                    { label: "Ежедневно", value: "daily", icon: "calendar-month" },
+                    { label: "По дням недели", value: "weekly_days", icon: "calendar-week" },
+                    { label: "Каждые X дней", value: "every_x_days", icon: "calendar-sync" },
+                  ].map(item => (
+                    <MenuItem
+                      key={item.value}
+                      label={item.label}
+                      leftIcon={item.icon}
+                      isSelected={scheduleType === item.value}
+                      onPress={() => {
+                        setScheduleType(item.value as Medication["schedule_type"]);
+                        setScheduleVisible(false);
+                        setScheduleMenuPosition(null);
+                        setScheduleReady(false);
+                      }}
+                    />
+                  ))}
+                </Menu>
+              </View>
+            )}
 
-          <Snackbar
-            visible={snackbarVisible}
-            onDismiss={() => setSnackbarVisible(false)}
-            duration={2500}
-            style={{
-              backgroundColor:
-                snackbarType === 'success'
-                  ? '#252D25'
-                  : snackbarType === 'warning'
-                  ? '#2D2B25'
-                  : '#2D2525',
-              marginBottom: 20,
-            }}
-          >
-            <Text
-              style={{
-                color:
-                  snackbarType === 'success'
-                    ? '#6EE7B7'
-                    : snackbarType === 'warning'
-                    ? '#FBBF24'
-                    : '#FCA5A5',
-                fontWeight: '500',
-              }}
-            >
-              {snackbarMessage}
-            </Text>
-          </Snackbar>
-        </Screen>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          </Portal>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Portal.Host>
   );
 }
 
-// Компонент AnimatedTextInput — с иконками и анимацией
-const AnimatedTextInput = React.forwardRef(({ 
+// ✅ AnimatedTextInput с белым текстом (ваш preference)
+const AnimatedTextInput = forwardRef(({ 
   label, 
   value, 
   onChangeText, 
@@ -858,7 +1110,7 @@ const AnimatedTextInput = React.forwardRef(({
   style, 
   icon,
   ...props 
-}: any, ref: any) => {
+}: any, ref: React.Ref<TextInput>) => {
   const theme = useTheme();
   const scale = useRef(new Animated.Value(1)).current;
 
@@ -897,7 +1149,7 @@ const AnimatedTextInput = React.forwardRef(({
         theme={{
           colors: {
             primary: error ? '#EF4444' : '#4A3AFF',
-            text: '#fff',
+            text: '#fff', // ✅ ваш preference: white text
             placeholder: '#888',
             background: '#1E1E1E',
           },
