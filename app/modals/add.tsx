@@ -17,7 +17,17 @@ import { getLocalUser } from "@/services/localUser.service";
 
 const daysOfWeek = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
 
-// 🔔 Планирование уведомлений (без изменений)
+// ✅ ИСПРАВЛЕННЫЙ обработчик уведомлений
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,    // ✅ Заменяет shouldShowAlert
+    shouldShowList: true,      // ✅ Новый параметр
+  }),
+});
+
+// 🔔 Планирование уведомлений — ✅ с поддержкой end_date
 async function scheduleMedicationNotification(
   name: string,
   form: string,
@@ -25,7 +35,8 @@ async function scheduleMedicationNotification(
   scheduleType: Medication["schedule_type"],
   weeklyDays?: string[],
   intervalDays?: number,
-  startDate?: string
+  startDate?: string,
+  endDate?: string // ← добавлено
 ) {
   const [hour, minute] = time.split(":").map(Number);
   if (isNaN(hour) || isNaN(minute)) return;
@@ -38,12 +49,20 @@ async function scheduleMedicationNotification(
     if (notificationHour < 0) notificationHour = 23;
   }
 
+  const now = new Date();
+  const end = endDate ? new Date(endDate) : null;
+
+  // Если уже после окончания — не планируем
+  if (end && now > end) return;
+
   if (scheduleType === "daily") {
-    const now = new Date();
     const triggerTime = new Date();
     triggerTime.setHours(notificationHour);
     triggerTime.setMinutes(notificationMinute);
     if (triggerTime <= now) triggerTime.setDate(triggerTime.getDate() + 1);
+
+    // Не планируем после end_date
+    if (end && triggerTime > end) return;
 
     await Notifications.scheduleNotificationAsync({
       content: {
@@ -55,11 +74,22 @@ async function scheduleMedicationNotification(
     });
   } else if (scheduleType === "weekly_days" && weeklyDays) {
     for (const day of weeklyDays) {
-      const now = new Date();
+      const dayIndexMap: Record<string, number> = {
+        "ПН": 1, "ВТ": 2, "СР": 3, "ЧТ": 4, "ПТ": 5, "СБ": 6, "ВС": 0,
+      };
+      const targetWeekday = dayIndexMap[day] ?? 1;
+
       const triggerTime = new Date();
       triggerTime.setHours(notificationHour);
       triggerTime.setMinutes(notificationMinute);
-      if (triggerTime <= now) triggerTime.setDate(triggerTime.getDate() + 1);
+
+      // Найти ближайшую дату с этим днём недели
+      let daysToAdd = (targetWeekday - triggerTime.getDay() + 7) % 7;
+      if (daysToAdd === 0 && triggerTime <= now) daysToAdd = 7;
+      triggerTime.setDate(triggerTime.getDate() + daysToAdd);
+
+      // Не планируем после end_date
+      if (end && triggerTime > end) continue;
 
       await Notifications.scheduleNotificationAsync({
         content: {
@@ -84,7 +114,14 @@ async function scheduleMedicationNotification(
       const triggerTime = new Date(current);
       triggerTime.setHours(notificationHour);
       triggerTime.setMinutes(notificationMinute);
-      if (triggerTime <= today) triggerTime.setDate(triggerTime.getDate() + 1);
+
+      // Если уже прошло — сдвигаем на 1 день вперёд (но не раньше текущего дня)
+      if (triggerTime <= now) {
+        triggerTime.setDate(triggerTime.getDate() + 1);
+      }
+
+      // Не планируем после end_date
+      if (end && triggerTime > end) break;
 
       await Notifications.scheduleNotificationAsync({
         content: {
@@ -223,7 +260,7 @@ export default function Add() {
       const localId = await addMedication(med);
       console.log("✅ Лекарство сохранено локально, id:", localId);
 
-      // 2️⃣ Планируем уведомления
+      // 2️⃣ Планируем уведомления — ✅ с end_date
       for (const time of med.times_list) {
         await scheduleMedicationNotification(
           med.name,
@@ -232,7 +269,8 @@ export default function Add() {
           med.schedule_type,
           med.weekly_days,
           med.interval_days,
-          med.start_date
+          med.start_date,
+          med.end_date // ← передаём endDate
         );
       }
 

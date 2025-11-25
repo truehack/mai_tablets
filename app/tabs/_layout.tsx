@@ -6,6 +6,7 @@ export const tabs = [
   { name: 'Расписание', path: 'schedule', icon: 'home' },
   { name: 'Уведомления', path: 'notifications', icon: 'bell-ring' },
   { name: 'Профиль', path: 'profile', icon: 'account' },
+	{ name: 'Пациент', path: 'patient', icon: 'account-multiple' }
 ];
 
 export default function TabsLayout() {

@@ -1,4 +1,3 @@
-// app/modals/take-medication-modal.tsx
 import React, { useEffect, useState } from 'react';
 import { View, Text, Alert, TouchableOpacity } from 'react-native';
 import { Card, Button, Portal, Modal, Provider, Surface, Icon } from 'react-native-paper';
@@ -14,6 +13,23 @@ export default function TakeMedicationModal() {
   const [medication, setMedication] = useState<any>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [actionStatus, setActionStatus] = useState<{ type: 'taken' | 'skipped'; time: string } | null>(null);
+
+  // ✅ Очищаем plannedTime: оставляем только "HH:mm"
+  const cleanPlannedTime = React.useMemo(() => {
+    if (!plannedTime) return '00:00';
+    // Если ISO-строка — вытаскиваем время
+    if (plannedTime.includes('T')) {
+      const timePart = plannedTime.split('T')[1];
+      if (timePart.includes(':')) {
+        return timePart.substring(0, 5); // "09:00"
+      }
+    }
+    // Если "09:00:00" → "09:00"
+    if (plannedTime.includes(':') && plannedTime.length > 5) {
+      return plannedTime.substring(0, 5);
+    }
+    return plannedTime;
+  }, [plannedTime]);
 
   useEffect(() => {
     const loadMed = async () => {
@@ -34,9 +50,12 @@ export default function TakeMedicationModal() {
           id: found.id,
           server_id: found.server_id,
           name: found.name,
+          plannedTimeRaw: plannedTime,
+          plannedTimeClean: cleanPlannedTime,
         });
         
         setMedication(found);
+        
       } catch (error) {
         console.error('Ошибка загрузки лекарства:', error);
         Alert.alert('Ошибка', 'Не удалось загрузить лекарство');
@@ -45,7 +64,7 @@ export default function TakeMedicationModal() {
     };
 
     loadMed();
-  }, [medicationId, router]);
+  }, [medicationId, router, plannedTime, cleanPlannedTime]);
 
   const handleIntakeAction = async (taken: boolean) => {
     if (!medication) {
@@ -58,19 +77,29 @@ export default function TakeMedicationModal() {
     try {
       const now = new Date();
       const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const intakeDateTime = new Date(now);
       
+      console.log('📅 Сохраняем запись с реальным временем:', {
+        intakeDateTime: intakeDateTime.toISOString(),
+        formattedTime: formattedTime,
+        currentTime: now.toISOString(),
+        plannedTimeRaw: plannedTime,
+        plannedTimeClean: cleanPlannedTime,
+      });
+      
+      // ✅ Используем cleanPlannedTime во всех местах
       const localIntakeData = {
         medication_id: medication.id,
-        planned_time: plannedTime,
-        datetime: now.toISOString(),
+        planned_time: cleanPlannedTime, // ✅ только "HH:mm"
+        datetime: intakeDateTime.toISOString(),
         taken,
         skipped: !taken,
       };
 
       const serverIntakeData = {
-        medication_id: medication.server_id,
-        planned_time: plannedTime,
-        datetime: now.toISOString(),
+        medication_id: medication.server_id ?? medication.id, // ✅ если server_id null — id
+        planned_time: cleanPlannedTime, // ✅ только "HH:mm"
+        datetime: intakeDateTime.toISOString(),
         taken,
         skipped: !taken,
       };
@@ -85,25 +114,19 @@ export default function TakeMedicationModal() {
         time: formattedTime 
       });
 
-      // 3️⃣ Синхронизируем
-      if (medication.server_id != null) {
-        try {
-          console.log('📤 Синхронизация с server_id:', medication.server_id);
-          await apiClient.intakeSync(serverIntakeData);
-          console.log('✅ Синхронизация успешна');
-        } catch (syncError: any) {
-          console.warn('⚠️ Синхронизация отложена:', syncError.message);
-          Alert.alert(
-            'Синхронизация отложена',
-            'Данные сохранены на устройстве.',
-            [{ text: 'OK' }]
-          );
-        }
-      } else {
-        console.warn('⏭️ Лекарство не синхронизировано (server_id = null)');
+      // 3️⃣ Синхронизируем (теперь работает корректно благодаря исправленному ensureISOZ)
+      try {
+        console.log('📤 Синхронизация intake:', {
+          medication_id: serverIntakeData.medication_id,
+          planned_time: serverIntakeData.planned_time,
+        });
+        await apiClient.intakeSync(serverIntakeData);
+        console.log('✅ Синхронизация успешна');
+      } catch (syncError: any) {
+        console.warn('⚠️ Синхронизация отложена:', syncError.message);
         Alert.alert(
           'Синхронизация отложена',
-          `Лекарство "${medication.name}" ещё не сохранено на сервере.`,
+          'Данные сохранены на устройстве.',
           [{ text: 'OK' }]
         );
       }
@@ -173,21 +196,8 @@ export default function TakeMedicationModal() {
     );
   }
 
-  // Форматируем plannedTime для отображения
-  const displayTime = (() => {
-    try {
-      if (/^\d{1,2}:\d{2}/.test(plannedTime)) {
-        return plannedTime;
-      }
-      const d = new Date(plannedTime);
-      if (!isNaN(d.getTime())) {
-        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      }
-      return plannedTime;
-    } catch {
-      return plannedTime;
-    }
-  })();
+  // Отображаемое время (уже очищенное)
+  const displayTime = cleanPlannedTime;
 
   return (
     <Provider>
@@ -204,7 +214,7 @@ export default function TakeMedicationModal() {
             <View style={{ 
               flexDirection: 'row', 
               justifyContent: 'space-between', 
-              alignItems: 'flex-start', // для многострочного текста
+              alignItems: 'flex-start',
               marginBottom: 16 
             }}>
               <View style={{ flex: 1, marginRight: 12 }}>

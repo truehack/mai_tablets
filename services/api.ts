@@ -1,4 +1,3 @@
-// @/services/api.ts
 import { API_BASE_URL } from '@/config/api';
 import { getLocalUser } from '@/services/localUser.service';
 
@@ -7,7 +6,7 @@ interface ApiError extends Error {
 }
 
 /**
- * Надёжное приведение к ISO 8601 UTC (Z-суффикс)
+ * 🔑 ИСПРАВЛЕНО: для "09:00" — используем ЛОКАЛЬНУЮ дату (не UTC!)
  * Поддерживает: "09:00", "2025-04-05 09:00", "2025-04-05T09:00+03:00", "2025-04-05T09:00:00.000Z"
  */
 const ensureISOZ = (dt: string | Date): string => {
@@ -18,29 +17,37 @@ const ensureISOZ = (dt: string | Date): string => {
   } else {
     let str = dt.trim().replace(' ', 'T');
 
-    // Если только время — дополняем сегодняшней датой в UTC
+    // ✅ Если только время (например, "09:00" или "09:00:00") — берём текущую ЛОКАЛЬНУЮ дату
     if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(str)) {
       const now = new Date();
-      str = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}T${str}`;
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      str = `${year}-${month}-${day}T${str}`;
+      // console.log(`[ensureISOZ] Время "${dt}" → локальная дата: ${str}`);
     }
 
-    // Заменяем Z и смещения на +00:00 для совместимости
-    str = str.replace(/Z$/, '+00:00').replace(/([+-]\d{2}):?(\d{2})$/, '$1:$2');
+    // Нормализуем временные зоны для корректного парсинга
+    str = str
+      .replace(/Z$/, '+00:00')
+      .replace(/([+-]\d{2}):?(\d{2})$/, '$1:$2');
 
     d = new Date(str);
+
+    if (isNaN(d.getTime())) {
+      throw new Error(`Invalid date after parsing: "${str}" (original: "${dt}")`);
+    }
   }
 
-  if (isNaN(d.getTime())) {
-    throw new Error(`Invalid date: ${dt}`);
-  }
-
-  return d.toISOString(); // всегда YYYY-MM-DDTHH:mm:ss.sssZ
+  const result = d.toISOString(); // всегда YYYY-MM-DDTHH:mm:ss.sssZ
+  // console.log(`[ensureISOZ] "${dt}" → "${result}"`);
+  return result;
 };
 
 export const apiClient = {
   post: async <T = any>(endpoint: string, body: any): Promise<T> => {
     const url = `${API_BASE_URL}${endpoint}`;
-    console.log(`📡 POST ${url}`);
+    // console.log(`📡 POST ${url}`);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -52,7 +59,7 @@ export const apiClient = {
       let message = `Ошибка ${response.status}`;
       try {
         const errorData = await response.json();
-        message = errorData.detail || message;
+        message = errorData.detail || errorData.message || message;
       } catch {}
       throw new Error(message);
     }
@@ -62,7 +69,7 @@ export const apiClient = {
 
   postWithAuth: async <T = any>(endpoint: string, body: any): Promise<T> => {
     const url = `${API_BASE_URL}${endpoint}`;
-    console.log(`📡 POST (auth) ${url}`);
+    // console.log(`📡 POST (auth) ${url}`);
 
     const user = await getLocalUser();
     if (!user) throw new Error('Требуется авторизация');
@@ -81,7 +88,7 @@ export const apiClient = {
       let message = `Ошибка ${response.status}`;
       try {
         const errorData = await response.json();
-        message = errorData.detail || message;
+        message = errorData.detail || errorData.message || message;
       } catch {}
       throw new Error(message);
     }
@@ -89,13 +96,64 @@ export const apiClient = {
     return response.json();
   },
 
-  /**
-   * 🔄 Синхронизация приёма: локальный формат → серверный
-   */
+  getWithAuth: async <T = any>(endpoint: string): Promise<T> => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    // console.log(`📡 GET (auth) ${url}`);
+
+    const user = await getLocalUser();
+    if (!user) throw new Error('Требуется авторизация');
+
+    const credentials = btoa(`${user.patient_uuid}:${user.patient_password_hash}`);
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Basic ${credentials}`,
+      },
+    });
+
+    if (!response.ok) {
+      let message = `Ошибка ${response.status}`;
+      try {
+        const errorData = await response.json();
+        message = errorData.detail || errorData.message || message;
+      } catch {}
+      throw new Error(message);
+    }
+
+    return response.json();
+  },
+
+  deleteWithAuth: async <T = any>(endpoint: string): Promise<T> => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    // console.log(`📡 DELETE (auth) ${url}`);
+
+    const user = await getLocalUser();
+    if (!user) throw new Error('Требуется авторизация');
+
+    const credentials = btoa(`${user.patient_uuid}:${user.patient_password_hash}`);
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Basic ${credentials}`,
+      },
+    });
+
+    if (!response.ok) {
+      let message = `Ошибка ${response.status}`;
+      try {
+        const errorData = await response.json();
+        message = errorData.detail || errorData.message || message;
+      } catch {}
+      throw new Error(message);
+    }
+
+    return response.json();
+  },
+
   intakeSync: async (localIntake: {
     medication_id: number;
-    planned_time: string;   // как в БД: "09:00" или "2025-04-05 09:00"
-    datetime: string;       // как в БД: ISO string
+    planned_time: string;
+    datetime: string;
     taken: boolean;
     skipped: boolean;
     notes?: string;
@@ -109,10 +167,9 @@ export const apiClient = {
         notes: localIntake.notes,
       };
 
-      console.log('📤 Синхронизация приёма →', payload);
+      // console.log('📤 Синхронизация приёма →', payload);
       await apiClient.postWithAuth('/intake/add_or_update', payload);
-      console.log('✅ Синхронизация успешна');
-
+      // console.log('✅ Синхронизация успешна');
     } catch (error: any) {
       console.warn('⚠️ Ошибка синхронизации:', error.message);
       throw error;

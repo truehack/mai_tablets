@@ -1,7 +1,6 @@
-// app/(tabs)/schedule.tsx
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { View, FlatList, TouchableOpacity } from 'react-native';
-import { Text, Card, FAB, Icon } from 'react-native-paper'; // ✅ добавлен Icon
+import { Text, Card, FAB, Icon } from 'react-native-paper';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { Screen } from '@/components/screen';
@@ -16,17 +15,21 @@ export default function Schedule() {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
     const today = new Date();
     const day = today.getDay();
-    const diff = today.getDate() - (day === 0 ? 6 : day - 1);
-    return new Date(today.setDate(diff));
+    const diff = today.getDate() - (day === 0 ? -6 : day - 1); // ← ИСПРАВЛЕНО: -6 вместо 6
+    const monday = new Date(today);
+    monday.setDate(diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
   });
   const [selectedDay, setSelectedDay] = useState<string>('');
 
   const days = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
 
   useEffect(() => {
-    const todayIndex = new Date().getDay();
-    const today = days[(todayIndex + 6) % 7];
-    setSelectedDay(today);
+    const today = new Date().getDay();
+    // ✅ Пн=0, Вт=1, ..., Вс=0 → индекс: Пн=0, Вт=1, ..., Вс=6
+    const index = today === 0 ? 6 : today - 1;
+    setSelectedDay(days[index]);
   }, []);
 
   const loadMeds = useCallback(async () => {
@@ -57,21 +60,35 @@ export default function Schedule() {
     }, [loadMeds, loadHistory])
   );
 
-  // ✅ Новая функция: получает статус + время последнего приёма за день
+  // ✅ ИСПРАВЛЕНО: безопасная нормализация даты (локальная полночь)
+  const normalizeLocalDate = (date: Date): Date => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
+
+  // ✅ ИСПРАВЛЕНО: сравнение по локальной дате
   const getIntakeStatusWithTime = (medicationId: number, date: Date) => {
-    const dateStr = date.toISOString().split('T')[0];
-    const dayIntakes = intakeHistory.filter(
-      intake =>
-        intake.medication_id === medicationId &&
-        intake.datetime.startsWith(dateStr)
-    );
+    const targetDate = normalizeLocalDate(date);
+
+    const dayIntakes = intakeHistory.filter(intake => {
+      if (intake.medication_id !== medicationId) return false;
+
+      const intakeDate = new Date(intake.datetime);
+      const normalizedIntakeDate = normalizeLocalDate(intakeDate);
+
+      return (
+        normalizedIntakeDate.getFullYear() === targetDate.getFullYear() &&
+        normalizedIntakeDate.getMonth() === targetDate.getMonth() &&
+        normalizedIntakeDate.getDate() === targetDate.getDate()
+      );
+    });
 
     if (dayIntakes.length === 0) {
       return { status: 'Не принято', time: null, color: '#FF3B30' };
     }
 
-    // Берём самый свежий приём за день
-    const latestIntake = dayIntakes.reduce((a, b) => 
+    const latestIntake = dayIntakes.reduce((a, b) =>
       new Date(a.datetime) > new Date(b.datetime) ? a : b
     );
 
@@ -89,27 +106,47 @@ export default function Schedule() {
     }
   };
 
-  const getDateForDay = (dayIndex: number) => {
+  const getDateForDay = (dayIndex: number): Date => {
     const date = new Date(currentWeekStart);
     date.setDate(currentWeekStart.getDate() + dayIndex);
+    date.setHours(0, 0, 0, 0);
     return date;
   };
 
+  // ✅ ИСПРАВЛЕНО: надёжная проверка дат
   const isMedForSelectedDay = (med: Medication, day: string) => {
-    if (!med.start_date) return false;
-    const start = new Date(med.start_date);
-    if (isNaN(start.getTime())) return false;
-
-    if (med.schedule_type === 'daily') {
-      const today = new Date();
-      const todayStr = today.toISOString().split('T')[0];
-      const startStr = start.toISOString().split('T')[0];
-      return startStr <= todayStr;
+    const targetDate = getDateForDay(days.indexOf(day));
+    
+    // Парсим start_date
+    let startDate: Date | null = null;
+    if (med.start_date) {
+      startDate = new Date(med.start_date);
+      if (isNaN(startDate.getTime())) startDate = null;
     }
+    if (!startDate) return false;
+
+    const normalizedStartDate = normalizeLocalDate(startDate);
+    const normalizedTargetDate = normalizeLocalDate(targetDate);
+
+    if (normalizedTargetDate < normalizedStartDate) return false;
+
+    // Проверка end_date
+    if (med.end_date) {
+      const endDate = new Date(med.end_date);
+      if (!isNaN(endDate.getTime())) {
+        const normalizedEndDate = normalizeLocalDate(endDate);
+        if (normalizedTargetDate > normalizedEndDate) return false;
+      }
+    }
+
+    // Расписание
+    if (med.schedule_type === 'daily') return true;
 
     if (med.schedule_type === 'weekly_days' && med.weekly_days) {
       try {
-        const daysList = typeof med.weekly_days === 'string' ? JSON.parse(med.weekly_days) : med.weekly_days;
+        const daysList = typeof med.weekly_days === 'string'
+          ? JSON.parse(med.weekly_days)
+          : med.weekly_days;
         if (Array.isArray(daysList)) {
           return daysList.includes(day);
         }
@@ -118,12 +155,10 @@ export default function Schedule() {
       }
     }
 
-    if (med.schedule_type === 'every_x_days' && med.start_date && med.interval_days) {
-      const targetDate = getDateForDay(days.indexOf(day));
-      const diffMs = targetDate.getTime() - start.getTime();
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      if (diffDays < 0) return false;
-      return diffDays % med.interval_days === 0;
+    if (med.schedule_type === 'every_x_days' && typeof med.interval_days === 'number') {
+      const diffMs = normalizedTargetDate.getTime() - normalizedStartDate.getTime();
+      const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+      return diffDays >= 0 && diffDays % med.interval_days === 0;
     }
 
     return false;
@@ -135,8 +170,11 @@ export default function Schedule() {
 
   const minDate = new Date();
   minDate.setDate(minDate.getDate() - 56);
+  minDate.setHours(0, 0, 0, 0);
+  
   const maxDate = new Date();
   maxDate.setDate(maxDate.getDate() + 56);
+  maxDate.setHours(0, 0, 0, 0);
 
   const canGoBack = currentWeekStart > minDate;
   const canGoForward = currentWeekStart < maxDate;
@@ -146,9 +184,7 @@ export default function Schedule() {
       const newDate = new Date(currentWeekStart);
       newDate.setDate(currentWeekStart.getDate() - 7);
       setCurrentWeekStart(newDate);
-      const todayIndex = new Date().getDay();
-      const today = days[(todayIndex + 6) % 7];
-      setSelectedDay(today);
+      // ❌ Не меняем selectedDay при навигации
     }
   };
 
@@ -157,10 +193,21 @@ export default function Schedule() {
       const newDate = new Date(currentWeekStart);
       newDate.setDate(currentWeekStart.getDate() + 7);
       setCurrentWeekStart(newDate);
-      const todayIndex = new Date().getDay();
-      const today = days[(todayIndex + 6) % 7];
-      setSelectedDay(today);
+      // ❌ Не меняем selectedDay при навигации
     }
+  };
+
+  const goToToday = () => {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - (day === 0 ? -6 : day - 1);
+    const monday = new Date(today);
+    monday.setDate(diff);
+    monday.setHours(0, 0, 0, 0);
+    setCurrentWeekStart(monday);
+
+    const index = day === 0 ? 6 : day - 1;
+    setSelectedDay(days[index]);
   };
 
   return (
@@ -212,24 +259,16 @@ export default function Schedule() {
         </View>
 
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ color: '#ccc', fontSize: 14, textAlign: 'center', marginLeft: 10 }}>
-              {selectedDay && getDateForDay(days.indexOf(selectedDay)).toLocaleDateString('ru-RU')}
-            </Text>
-          </View>
+          <Text style={{ color: '#aaa', fontSize: 14, textAlign: 'center', flex: 1 }}>
+            {selectedDay &&
+              getDateForDay(days.indexOf(selectedDay)).toLocaleDateString('ru-RU', {
+                day: 'numeric',
+                month: 'long',
+              })}
+          </Text>
 
           <TouchableOpacity
-            onPress={() => {
-              const realToday = new Date();
-              const day = realToday.getDay();
-              const diff = realToday.getDate() - (day === 0 ? 6 : day - 1);
-              const currentMonday = new Date(realToday);
-              currentMonday.setDate(diff);
-              setCurrentWeekStart(currentMonday);
-              const todayIndex = realToday.getDay();
-              const todayDay = days[(todayIndex + 6) % 7];
-              setSelectedDay(todayDay);
-            }}
+            onPress={goToToday}
             style={{
               backgroundColor: '#4A3AFF',
               paddingHorizontal: 16,
@@ -278,18 +317,16 @@ export default function Schedule() {
               }
             >
               <View style={{ marginBottom: 16 }}>
-                {/* ✅ Строка времени + статуса с иконкой */}
+                {/* Строка времени + статуса */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                   <Text style={{ color: '#aaa', fontSize: 14, fontWeight: '600', marginRight: 6 }}>
                     {times}
                   </Text>
                   
-                  {/* Иконка статуса */}
                   {status === 'Принято' && <Icon source="check-circle" size={16} color={color} />}
                   {status === 'Пропущено' && <Icon source="close-circle" size={16} color={color} />}
                   {status === 'Не принято' && <Icon source="clock-outline" size={16} color={color} />}
                   
-                  {/* Текст статуса + время */}
                   <Text style={{ color: color, fontSize: 14, fontWeight: '500', marginLeft: 4 }}>
                     {status}
                     {time && ` в ${time}`}
