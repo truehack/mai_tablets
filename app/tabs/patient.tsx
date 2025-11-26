@@ -19,7 +19,7 @@ interface Medication {
   schedule_type: 'daily' | 'weekly_days' | 'every_x_days';
   week_days?: number[];
   interval_days?: number;
-  times_per_day: string[];
+  times_per_day: string[]; // например: ["08:00", "20:00"] или ["08:00:15"]
 }
 
 interface Intake {
@@ -30,6 +30,27 @@ interface Intake {
   status: 'taken' | 'skipped';
   notes?: string;
 }
+
+// ✅ Вспомогательная функция: форматирует Date → "HH:MM"
+const formatTimeHHMM = (date: Date): string => {
+  const h = date.getHours().toString().padStart(2, '0');
+  const m = date.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+};
+
+// ✅ Вспомогательная функция: парсит "HH:MM" или "HH:MM:SS" → секунды с полуночи (для сортировки)
+const timeToSeconds = (timeStr: string): number => {
+  const trimmed = timeStr.trim();
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
+  if (!match) return 0;
+
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+
+  if (h === 24 && m === 0) return 24 * 3600; // 24:00 → конец суток
+  if (h > 23) h = 23;
+  return h * 3600 + m * 60;
+};
 
 export default function PatientSchedule() {
   const router = useRouter();
@@ -66,22 +87,18 @@ export default function PatientSchedule() {
     return date;
   }, [currentWeekStart]);
 
-  // ✅ ИСПРАВЛЕНО: сопоставление по UTC-дате (строка YYYY-MM-DD)
+  // ✅ ГАРАНТИРОВАННО БЕЗ СЕКУНД: ручной формат HH:MM
   const getIntakeStatusWithTime = useCallback(
     (medication: Medication, date: Date) => {
       const medicationIdToMatch = medication.server_id ?? medication.id;
 
-      // 🔑 Преобразуем локальную дату в UTC-дату (тот же календарный день)
       const targetUTCDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
         .toISOString()
-        .slice(0, 10); // "2025-11-25"
+        .slice(0, 10);
 
       const dayIntakes = intakes.filter((intake) => {
         if (intake.medication_id !== medicationIdToMatch) return false;
-
-        // ✅ UTC-дата из scheduled_time
-        const intakeUTCDate = intake.scheduled_time.slice(0, 10); // "2025-11-25"
-
+        const intakeUTCDate = intake.scheduled_time.slice(0, 10);
         return intakeUTCDate === targetUTCDate;
       });
 
@@ -90,7 +107,6 @@ export default function PatientSchedule() {
           medication: { id: medication.id, name: medication.name, server_id: medication.server_id },
           targetUTCDate,
           medicationIdToMatch,
-          intakeDates: intakes.map(i => i.scheduled_time.slice(0, 10)),
         });
         return { status: 'Не принято', time: null, color: '#FF3B30' };
       }
@@ -99,12 +115,18 @@ export default function PatientSchedule() {
         a.scheduled_time > b.scheduled_time ? a : b
       );
 
-      const time = latestIntake.taken_time
-        ? new Date(latestIntake.taken_time).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : null;
+      // ✅ ТОЛЬКО ЧЧ:ММ — никаких секунд!
+      let time: string | null = null;
+      if (latestIntake.taken_time) {
+        try {
+          const takenDate = new Date(latestIntake.taken_time);
+          if (!isNaN(takenDate.getTime())) {
+            time = formatTimeHHMM(takenDate);
+          }
+        } catch (e) {
+          logWarning('Не удалось распарсить taken_time', latestIntake.taken_time);
+        }
+      }
 
       switch (latestIntake.status) {
         case 'taken':
@@ -118,7 +140,6 @@ export default function PatientSchedule() {
     [intakes]
   );
 
-  // ✅ ИСПРАВЛЕНО: фильтрация по UTC-дате
   const isMedForSelectedDay = useCallback(
     (med: Medication, day: string): boolean => {
       const targetDate = getDateForDay(days.indexOf(day));
@@ -126,7 +147,6 @@ export default function PatientSchedule() {
         .toISOString()
         .slice(0, 10);
 
-      // Сравниваем как строки YYYY-MM-DD
       if (targetUTCDate < med.start_date) return false;
       if (med.end_date && targetUTCDate > med.end_date) return false;
 
@@ -150,8 +170,21 @@ export default function PatientSchedule() {
     [getDateForDay]
   );
 
+  // ✅ Сортировка по времени (00:00 → 24:00), игнорируя секунды
   const filteredMeds = useMemo(() => {
-    return medications.filter((m) => isMedForSelectedDay(m, selectedDay));
+    const getEarliestTimeSeconds = (med: Medication): number => {
+      if (!Array.isArray(med.times_per_day) || med.times_per_day.length === 0) return 0;
+      try {
+        return Math.min(...med.times_per_day.map(timeToSeconds));
+      } catch (e) {
+        logWarning('Не удалось распарсить times_per_day', { medId: med.id, times: med.times_per_day });
+        return 0;
+      }
+    };
+
+    return medications
+      .filter((m) => isMedForSelectedDay(m, selectedDay))
+      .sort((a, b) => getEarliestTimeSeconds(a) - getEarliestTimeSeconds(b));
   }, [medications, selectedDay, isMedForSelectedDay]);
 
   // === Загрузка данных ===
@@ -386,7 +419,14 @@ export default function PatientSchedule() {
         renderItem={({ item }) => {
           const { status, time, color } = getIntakeStatusWithTime(item, selectedDate);
 
-          const times = item.times_per_day.join(', ');
+          // ✅ Гарантированно HH:MM — даже если в times_per_day есть секунды
+          const times = item.times_per_day
+            .map(t => {
+              const match = t.match(/^(\d{1,2}):(\d{2})/);
+              return match ? `${match[1].padStart(2, '0')}:${match[2]}` : t;
+            })
+            .join(', ');
+
           const icon =
             item.form === 'tablet'
               ? '💊'

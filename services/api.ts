@@ -1,3 +1,4 @@
+// @/services/api.ts
 import { API_BASE_URL } from '@/config/api';
 import { getLocalUser } from '@/services/localUser.service';
 
@@ -24,7 +25,6 @@ const ensureISOZ = (dt: string | Date): string => {
       const month = String(now.getMonth() + 1).padStart(2, '0');
       const day = String(now.getDate()).padStart(2, '0');
       str = `${year}-${month}-${day}T${str}`;
-      // console.log(`[ensureISOZ] Время "${dt}" → локальная дата: ${str}`);
     }
 
     // Нормализуем временные зоны для корректного парсинга
@@ -39,16 +39,26 @@ const ensureISOZ = (dt: string | Date): string => {
     }
   }
 
-  const result = d.toISOString(); // всегда YYYY-MM-DDTHH:mm:ss.sssZ
-  // console.log(`[ensureISOZ] "${dt}" → "${result}"`);
-  return result;
+  return d.toISOString(); // всегда YYYY-MM-DDTHH:mm:ss.sssZ
+};
+
+// 🔐 Вспомогательная функция для получения заголовков с Basic Auth
+const getAuthHeaders = async () => {
+  const user = await getLocalUser();
+  if (!user) throw new Error('Требуется авторизация');
+
+  const credentials = btoa(`${user.patient_uuid}:${user.patient_password_hash}`);
+  return {
+    'Authorization': `Basic ${credentials}`,
+  };
 };
 
 export const apiClient = {
+  /**
+   * POST без аутентификации (например, /auth/token)
+   */
   post: async <T = any>(endpoint: string, body: any): Promise<T> => {
     const url = `${API_BASE_URL}${endpoint}`;
-    // console.log(`📡 POST ${url}`);
-
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -67,19 +77,42 @@ export const apiClient = {
     return response.json();
   },
 
+  /**
+   * GET с Basic Auth
+   */
+  getWithAuth: async <T = any>(endpoint: string): Promise<T> => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    const headers = await getAuthHeaders();
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      let message = `Ошибка ${response.status}`;
+      try {
+        const errorData = await response.json();
+        message = errorData.detail || errorData.message || message;
+      } catch {}
+      throw new Error(message);
+    }
+
+    return response.json();
+  },
+
+  /**
+   * POST с Basic Auth
+   */
   postWithAuth: async <T = any>(endpoint: string, body: any): Promise<T> => {
     const url = `${API_BASE_URL}${endpoint}`;
-    // console.log(`📡 POST (auth) ${url}`);
+    const headers = await getAuthHeaders();
 
-    const user = await getLocalUser();
-    if (!user) throw new Error('Требуется авторизация');
-
-    const credentials = btoa(`${user.patient_uuid}:${user.patient_password_hash}`);
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Basic ${credentials}`,
+        ...headers,
       },
       body: JSON.stringify(body),
     });
@@ -96,60 +129,49 @@ export const apiClient = {
     return response.json();
   },
 
-  getWithAuth: async <T = any>(endpoint: string): Promise<T> => {
+  /**
+   * ✅ DELETE с Basic Auth — поддерживает 204 No Content
+   */
+  deleteWithAuth: async (endpoint: string): Promise<void> => {
     const url = `${API_BASE_URL}${endpoint}`;
-    // console.log(`📡 GET (auth) ${url}`);
+    const headers = await getAuthHeaders();
 
-    const user = await getLocalUser();
-    if (!user) throw new Error('Требуется авторизация');
-
-    const credentials = btoa(`${user.patient_uuid}:${user.patient_password_hash}`);
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${credentials}`,
-      },
-    });
-
-    if (!response.ok) {
-      let message = `Ошибка ${response.status}`;
-      try {
-        const errorData = await response.json();
-        message = errorData.detail || errorData.message || message;
-      } catch {}
-      throw new Error(message);
-    }
-
-    return response.json();
-  },
-
-  deleteWithAuth: async <T = any>(endpoint: string): Promise<T> => {
-    const url = `${API_BASE_URL}${endpoint}`;
-    // console.log(`📡 DELETE (auth) ${url}`);
-
-    const user = await getLocalUser();
-    if (!user) throw new Error('Требуется авторизация');
-
-    const credentials = btoa(`${user.patient_uuid}:${user.patient_password_hash}`);
     const response = await fetch(url, {
       method: 'DELETE',
-      headers: {
-        'Authorization': `Basic ${credentials}`,
-      },
+      headers,
     });
 
     if (!response.ok) {
       let message = `Ошибка ${response.status}`;
       try {
-        const errorData = await response.json();
+        // Пытаемся прочитать JSON, но не требуем его
+        const errorData = await response.json().catch(() => ({}));
         message = errorData.detail || errorData.message || message;
       } catch {}
       throw new Error(message);
     }
 
-    return response.json();
+    // ✅ Для 204 — не вызываем .json()
+    // Если сервер вернёт 200 с телом — можно расширить, но у вас 204
+    return; // void
   },
 
+  // 🔹 ==== Специфичные методы API ====
+
+  /**
+   * Удалить лекарство на сервере по server_id
+   * Вызывает: DELETE /medicines/delete_medication/{medication_id}
+   */
+  deleteMedication: async (medicationId: number): Promise<void> => {
+    if (!Number.isInteger(medicationId) || medicationId <= 0) {
+      throw new Error('Некорректный ID лекарства');
+    }
+    return apiClient.deleteWithAuth(`/medicines/delete_medication/${medicationId}`);
+  },
+
+  /**
+   * Синхронизация приёма
+   */
   intakeSync: async (localIntake: {
     medication_id: number;
     planned_time: string;
@@ -167,11 +189,9 @@ export const apiClient = {
         notes: localIntake.notes,
       };
 
-      // console.log('📤 Синхронизация приёма →', payload);
       await apiClient.postWithAuth('/intake/add_or_update', payload);
-      // console.log('✅ Синхронизация успешна');
     } catch (error: any) {
-      console.warn('⚠️ Ошибка синхронизации:', error.message);
+      console.warn('⚠️ Ошибка синхронизации приёма:', error.message);
       throw error;
     }
   },

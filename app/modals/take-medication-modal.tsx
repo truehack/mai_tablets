@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Alert, TouchableOpacity } from 'react-native';
+import { View, Text, Alert, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Card, Button, Portal, Modal, Provider, Surface, Icon } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useDatabase } from '@/hooks/use-database';
@@ -34,7 +34,11 @@ export default function TakeMedicationModal() {
   useEffect(() => {
     const loadMed = async () => {
       try {
-        if (!medicationId) return;
+        if (!medicationId) {
+          Alert.alert('Ошибка', 'ID лекарства не указан');
+          router.back();
+          return;
+        }
         
         const meds = await getMedications();
         const found = meds.find(m => m.id === Number(medicationId));
@@ -46,14 +50,6 @@ export default function TakeMedicationModal() {
           return;
         }
         
-        console.log('💊 Загружено лекарство:', {
-          id: found.id,
-          server_id: found.server_id,
-          name: found.name,
-          plannedTimeRaw: plannedTime,
-          plannedTimeClean: cleanPlannedTime,
-        });
-        
         setMedication(found);
         
       } catch (error) {
@@ -64,7 +60,7 @@ export default function TakeMedicationModal() {
     };
 
     loadMed();
-  }, [medicationId, router, plannedTime, cleanPlannedTime]);
+  }, [medicationId, router]);
 
   const handleIntakeAction = async (taken: boolean) => {
     if (!medication) {
@@ -79,26 +75,18 @@ export default function TakeMedicationModal() {
       const formattedTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const intakeDateTime = new Date(now);
       
-      console.log('📅 Сохраняем запись с реальным временем:', {
-        intakeDateTime: intakeDateTime.toISOString(),
-        formattedTime: formattedTime,
-        currentTime: now.toISOString(),
-        plannedTimeRaw: plannedTime,
-        plannedTimeClean: cleanPlannedTime,
-      });
-      
       // ✅ Используем cleanPlannedTime во всех местах
       const localIntakeData = {
         medication_id: medication.id,
-        planned_time: cleanPlannedTime, // ✅ только "HH:mm"
+        planned_time: cleanPlannedTime,
         datetime: intakeDateTime.toISOString(),
         taken,
         skipped: !taken,
       };
 
       const serverIntakeData = {
-        medication_id: medication.server_id ?? medication.id, // ✅ если server_id null — id
-        planned_time: cleanPlannedTime, // ✅ только "HH:mm"
+        medication_id: medication.server_id ?? medication.id,
+        planned_time: cleanPlannedTime,
         datetime: intakeDateTime.toISOString(),
         taken,
         skipped: !taken,
@@ -114,12 +102,9 @@ export default function TakeMedicationModal() {
         time: formattedTime 
       });
 
-      // 3️⃣ Синхронизируем (теперь работает корректно благодаря исправленному ensureISOZ)
+      // 3️⃣ Синхронизируем
       try {
-        console.log('📤 Синхронизация intake:', {
-          medication_id: serverIntakeData.medication_id,
-          planned_time: serverIntakeData.planned_time,
-        });
+        console.log('📤 Синхронизация intake:', serverIntakeData);
         await apiClient.intakeSync(serverIntakeData);
         console.log('✅ Синхронизация успешна');
       } catch (syncError: any) {
@@ -147,8 +132,13 @@ export default function TakeMedicationModal() {
 
   const handleMarkAsTaken = () => handleIntakeAction(true);
   const handleMarkAsSkipped = () => handleIntakeAction(false);
-  const handleCancel = () => router.back();
+  const handleCancel = () => {
+    if (!isSyncing) {
+      router.back();
+    }
+  };
 
+  // 🔥 ОСНОВНАЯ ФУНКЦИЯ УДАЛЕНИЯ
   const handleDelete = async () => {
     if (!medication) {
       Alert.alert('Ошибка', 'Лекарство не загружено');
@@ -157,20 +147,50 @@ export default function TakeMedicationModal() {
 
     Alert.alert(
       'Удалить лекарство?',
-      `Вы уверены, что хотите удалить "${medication.name}"?`,
+      `Вы уверены, что хотите удалить "${medication.name}"?\nВсе будущие приёмы также будут удалены.`,
       [
         { text: 'Отмена', style: 'cancel' },
         {
           text: 'Удалить',
           style: 'destructive',
           onPress: async () => {
+            setIsSyncing(true);
+
             try {
+              // 1️⃣ Удаляем будущие приёмы локально
               await deleteFutureIntakes(medication.id);
+              // 2️⃣ Удаляем лекарство локально
               await deleteMedication(medication.id);
+
+              // 3️⃣ Удаляем на сервере, ЕСЛИ препарат с сервера (server_id существует)
+              if (medication.server_id) {
+                try {
+                  console.log('📤 Удаление на сервере (id:', medication.server_id, ')');
+                  await apiClient.deleteMedication(medication.server_id);
+                  console.log('✅ Удалено на сервере');
+                } catch (syncError: any) {
+                  console.warn('⚠️ Ошибка синхронизации удаления:', syncError.message);
+                  
+                  // Восстанавливать локально не будем — но предупредим
+                  Alert.alert(
+                    'Частичное удаление',
+                    `Лекарство удалено на устройстве, но не на сервере.\nПричина: ${syncError.message}`,
+                    [{ text: 'Понятно' }]
+                  );
+                }
+              } else {
+                console.log('ℹ️ Препарат локальный — синхронизация не требуется');
+              }
+
+              // ✅ Успех
+              Alert.alert('Готово', `"${medication.name}" удалено`);
               router.back();
-            } catch (error) {
-              console.error('Ошибка удаления:', error);
-              Alert.alert('Ошибка', 'Не удалось удалить лекарство');
+
+            } catch (error: any) {
+              console.error('❌ Критическая ошибка удаления:', error);
+              Alert.alert('Ошибка', error.message || 'Не удалось удалить лекарство');
+            } finally {
+              setIsSyncing(false);
             }
           },
         },
@@ -178,15 +198,17 @@ export default function TakeMedicationModal() {
     );
   };
 
+  // 🟡 Loading state
   if (!medication) {
     return (
       <Provider>
         <Portal>
-          <Modal visible={true} onDismiss={handleCancel}>
-            <Card style={{ margin: 20, backgroundColor: '#1E1E1E' }}>
-              <Card.Content>
-                <Text style={{ color: 'white', textAlign: 'center' }}>
-                  {isSyncing ? 'Синхронизация...' : 'Загрузка...'}
+          <Modal visible={true} onDismiss={handleCancel} contentContainerStyle={{ flex: 1, justifyContent: 'center' }}>
+            <Card style={{ margin: 20, backgroundColor: '#1E1E1E', padding: 24 }}>
+              <Card.Content style={{ alignItems: 'center' }}>
+                <ActivityIndicator animating={true} color="#64B5F6" size="large" />
+                <Text style={{ color: 'white', marginTop: 16, fontSize: 16 }}>
+                  {isSyncing ? 'Синхронизация...' : 'Загрузка лекарства...'}
                 </Text>
               </Card.Content>
             </Card>
@@ -196,13 +218,16 @@ export default function TakeMedicationModal() {
     );
   }
 
-  // Отображаемое время (уже очищенное)
   const displayTime = cleanPlannedTime;
 
   return (
     <Provider>
       <Portal>
-        <Modal visible={true} onDismiss={handleCancel}>
+        <Modal 
+          visible={true} 
+          onDismiss={handleCancel}
+          dismissable={!isSyncing}
+        >
           <Surface style={{
             margin: 20,
             backgroundColor: '#1E1E1E',
@@ -210,7 +235,7 @@ export default function TakeMedicationModal() {
             padding: 16,
             elevation: 4,
           }}>
-            {/* Header with pill icon and time */}
+            {/* Header: Pill + Time + Delete */}
             <View style={{ 
               flexDirection: 'row', 
               justifyContent: 'space-between', 
@@ -230,7 +255,6 @@ export default function TakeMedicationModal() {
                   </Text>
                 </View>
                 
-                {/* Time row: clock icon + scheduled time */}
                 <View style={{ 
                   flexDirection: 'row', 
                   alignItems: 'center', 
@@ -258,7 +282,7 @@ export default function TakeMedicationModal() {
               </TouchableOpacity>
             </View>
 
-            {/* Content */}
+            {/* Instructions */}
             {medication.instructions && (
               <View style={{ marginBottom: 20 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
@@ -270,7 +294,7 @@ export default function TakeMedicationModal() {
               </View>
             )}
 
-            {/* Footer Buttons */}
+            {/* Action Buttons */}
             <View style={{ 
               flexDirection: 'row', 
               justifyContent: 'space-around', 
@@ -317,7 +341,7 @@ export default function TakeMedicationModal() {
               </Button>
             </View>
 
-            {/* Labels */}
+            {/* Button Labels */}
             <View style={{ 
               flexDirection: 'row', 
               justifyContent: 'space-around', 
@@ -328,7 +352,7 @@ export default function TakeMedicationModal() {
               <Text style={{ color: isSyncing ? '#666' : '#4A3AFF', fontSize: 12 }}>Перенести</Text>
             </View>
 
-            {/* ✅ Action confirmation */}
+            {/* ✅ Action Feedback */}
             {actionStatus && (
               <View style={{ 
                 marginTop: 16, 

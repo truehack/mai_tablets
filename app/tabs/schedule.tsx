@@ -15,7 +15,7 @@ export default function Schedule() {
   const [currentWeekStart, setCurrentWeekStart] = useState<Date>(() => {
     const today = new Date();
     const day = today.getDay();
-    const diff = today.getDate() - (day === 0 ? -6 : day - 1); // ← ИСПРАВЛЕНО: -6 вместо 6
+    const diff = today.getDate() - (day === 0 ? -6 : day - 1);
     const monday = new Date(today);
     monday.setDate(diff);
     monday.setHours(0, 0, 0, 0);
@@ -27,7 +27,6 @@ export default function Schedule() {
 
   useEffect(() => {
     const today = new Date().getDay();
-    // ✅ Пн=0, Вт=1, ..., Вс=0 → индекс: Пн=0, Вт=1, ..., Вс=6
     const index = today === 0 ? 6 : today - 1;
     setSelectedDay(days[index]);
   }, []);
@@ -60,14 +59,12 @@ export default function Schedule() {
     }, [loadMeds, loadHistory])
   );
 
-  // ✅ ИСПРАВЛЕНО: безопасная нормализация даты (локальная полночь)
   const normalizeLocalDate = (date: Date): Date => {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
     return d;
   };
 
-  // ✅ ИСПРАВЛЕНО: сравнение по локальной дате
   const getIntakeStatusWithTime = (medicationId: number, date: Date) => {
     const targetDate = normalizeLocalDate(date);
 
@@ -113,11 +110,9 @@ export default function Schedule() {
     return date;
   };
 
-  // ✅ ИСПРАВЛЕНО: надёжная проверка дат
   const isMedForSelectedDay = (med: Medication, day: string) => {
     const targetDate = getDateForDay(days.indexOf(day));
-    
-    // Парсим start_date
+
     let startDate: Date | null = null;
     if (med.start_date) {
       startDate = new Date(med.start_date);
@@ -130,7 +125,6 @@ export default function Schedule() {
 
     if (normalizedTargetDate < normalizedStartDate) return false;
 
-    // Проверка end_date
     if (med.end_date) {
       const endDate = new Date(med.end_date);
       if (!isNaN(endDate.getTime())) {
@@ -139,7 +133,6 @@ export default function Schedule() {
       }
     }
 
-    // Расписание
     if (med.schedule_type === 'daily') return true;
 
     if (med.schedule_type === 'weekly_days' && med.weekly_days) {
@@ -164,14 +157,51 @@ export default function Schedule() {
     return false;
   };
 
+  // ✅ Сортировка по времени (00:00 → 24:00)
   const filteredMeds = useMemo(() => {
-    return medications.filter(m => isMedForSelectedDay(m, selectedDay));
+    // Вспомогательная функция: преобразует "HH:MM" или "HH:MM:SS" в секунды с полуночи
+    const timeToSeconds = (timeStr: string): number => {
+      const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?/);
+      if (!match) return 0;
+      let h = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      // Обработка 24:00 → 00:00 следующего дня, но для сортировки будем считать 24:00 = 86400 сек
+      if (h === 24 && m === 0) return 24 * 3600; // → последнее
+      if (h >= 24) h = 23; // защита
+      return h * 3600 + m * 60;
+    };
+
+    const getEarliestTimeSeconds = (med: Medication): number => {
+      try {
+        let times: string[] = [];
+        if (typeof med.times_list === 'string') {
+          try {
+            times = JSON.parse(med.times_list);
+          } catch {
+            times = med.times_list.split(',').map(t => t.trim());
+          }
+        } else if (Array.isArray(med.times_list)) {
+          times = med.times_list;
+        }
+
+        if (times.length === 0) return 0;
+
+        return Math.min(...times.map(timeToSeconds));
+      } catch (e) {
+        console.warn('Не удалось распарсить times_list для', med.name, med.times_list);
+        return 0;
+      }
+    };
+
+    return medications
+      .filter(med => isMedForSelectedDay(med, selectedDay))
+      .sort((a, b) => getEarliestTimeSeconds(a) - getEarliestTimeSeconds(b));
   }, [medications, selectedDay]);
 
   const minDate = new Date();
   minDate.setDate(minDate.getDate() - 56);
   minDate.setHours(0, 0, 0, 0);
-  
+
   const maxDate = new Date();
   maxDate.setDate(maxDate.getDate() + 56);
   maxDate.setHours(0, 0, 0, 0);
@@ -184,7 +214,6 @@ export default function Schedule() {
       const newDate = new Date(currentWeekStart);
       newDate.setDate(currentWeekStart.getDate() - 7);
       setCurrentWeekStart(newDate);
-      // ❌ Не меняем selectedDay при навигации
     }
   };
 
@@ -193,7 +222,6 @@ export default function Schedule() {
       const newDate = new Date(currentWeekStart);
       newDate.setDate(currentWeekStart.getDate() + 7);
       setCurrentWeekStart(newDate);
-      // ❌ Не меняем selectedDay при навигации
     }
   };
 
@@ -291,14 +319,24 @@ export default function Schedule() {
         renderItem={({ item }) => {
           const selectedDate = getDateForDay(days.indexOf(selectedDay));
           const { status, time, color } = getIntakeStatusWithTime(item.id, selectedDate);
-          
-          const times =
-            typeof item.times_list === 'string'
-              ? item.times_list
-              : Array.isArray(item.times_list)
-              ? item.times_list.join(', ')
-              : '—';
-          
+
+          // Нормализуем отображение времени
+          let timesDisplay = '—';
+          try {
+            if (Array.isArray(item.times_list)) {
+              timesDisplay = item.times_list.join(', ');
+            } else if (typeof item.times_list === 'string') {
+              try {
+                const parsed = JSON.parse(item.times_list);
+                timesDisplay = Array.isArray(parsed) ? parsed.join(', ') : item.times_list;
+              } catch {
+                timesDisplay = item.times_list.split(',').map(t => t.trim()).join(', ');
+              }
+            }
+          } catch (e) {
+            timesDisplay = String(item.times_list);
+          }
+
           const icon =
             item.form === 'tablet'
               ? '💊'
@@ -312,7 +350,7 @@ export default function Schedule() {
             <TouchableOpacity
               onPress={() =>
                 router.push(
-                  `/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(times)}`
+                  `/modals/take-medication-modal?medicationId=${item.id}&plannedTime=${encodeURIComponent(timesDisplay)}`
                 )
               }
             >
@@ -320,13 +358,13 @@ export default function Schedule() {
                 {/* Строка времени + статуса */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                   <Text style={{ color: '#aaa', fontSize: 14, fontWeight: '600', marginRight: 6 }}>
-                    {times}
+                    {timesDisplay}
                   </Text>
-                  
+
                   {status === 'Принято' && <Icon source="check-circle" size={16} color={color} />}
                   {status === 'Пропущено' && <Icon source="close-circle" size={16} color={color} />}
                   {status === 'Не принято' && <Icon source="clock-outline" size={16} color={color} />}
-                  
+
                   <Text style={{ color: color, fontSize: 14, fontWeight: '500', marginLeft: 4 }}>
                     {status}
                     {time && ` в ${time}`}
